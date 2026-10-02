@@ -46,8 +46,8 @@ internal static class CodexWindowClassifier
         return new CodexWindowCandidateSelection(host);
     }
 
-    private static bool IsHost(WindowCandidateFacts item) =>
-        item.IsVisible &&
+    internal static bool IsHost(WindowCandidateFacts item) =>
+        item.IsCodexProcess && item.IsVisible &&
         !item.IsMinimized &&
         item.OwnerHandle == IntPtr.Zero &&
         item.ClassName.Equals(ChromiumTopLevelClass, StringComparison.Ordinal) &&

@@ -1,6 +1,6 @@
 # 来源与修改说明
 
-定制项目：**CodexRelayUsage 1.0.1**，2026-10-02。
+定制项目：**CodexRelayUsage 1.0.2**，2026-10-02。
 
 上游：https://github.com/soleillevant0125/codex-token-overlay
 
@@ -11,5 +11,7 @@
 复用窗口识别与跟随、DPI、原生不激活窗体、位置调整、主题绑定及本地 IPC。命名空间和工程目录保留 CodexTokenOverlay，发布 EXE 为 CodexRelayUsage。
 
 主要修改：重写可空快照、累计用量及增量解析；按明确会话 ID 路由；增加字段缺失、异常、模型别名、手动选择/锁定和独立设置；调整中文悬浮条与面板；增加合成测试、预览及发布脚本；默认吸附顶部菜单空白区、向下展开，增加旧设置迁移及菜单／窗口按钮避让。与新统计口径不兼容的上游旧测试改用 Verify.ps1。
+
+1.0.2 新增 Windows MSAA 主文档身份读取与本地标题索引唯一匹配。IPC 订阅保留多个会话，改为仅用其确认连接；增加选择代次、过时读取取消及有界增量缓存，修复快速切换残留旧数字。
 
 应用无额外第三方 NuGet 库。独立 EXE 包含 Microsoft .NET / Windows Desktop 10.0.12 运行时，许可和第三方说明在 third_party。构建使用 .NET SDK 10.0.401；SDK 不在交付包中。

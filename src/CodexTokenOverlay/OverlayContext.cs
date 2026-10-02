@@ -5,7 +5,7 @@ namespace CodexTokenOverlay;
 internal sealed class OverlayContext : ApplicationContext
 {
     private readonly OverlaySettings _settings;
-    private readonly CodexIpcActiveThreadMonitor _routeMonitor = new();
+    private readonly CodexVisibleThreadMonitor _routeMonitor;
     private readonly TokenLogMonitor _monitor;
     private readonly TokenStripForm _form = new();
     private readonly AttachmentTargetHighlightForm _targetHighlight = new();
@@ -33,18 +33,18 @@ internal sealed class OverlayContext : ApplicationContext
     private CodexWindowTarget? _currentTarget;
     private ManualPlacementSnapshot? _settingsSnapshotBeforeEdit;
     private bool _saveFailureNotified;
-    private TokenSnapshot? _lastSnapshot;
+    private readonly SessionSelection _selection = new();
+    private CancellationTokenSource? _readCancellation;
+    private TokenSnapshot? _lastSnapshot => _selection.Snapshot;
     private bool _manuallyHidden;
     private int _pollInFlight;
     private int _disposed;
-    private TokenSnapshot? _pendingSnapshot;
-    private string? _pendingThreadId;
-    private string? _observedThreadId;
+    private string? _pendingThreadId => _selection.ThreadId;
     private ActiveThreadRouteStatus _pendingRouteStatus = new(null, 0, false, 0, null);
     private string? _manualThreadId;
     private string? _queuedRoot;
     private long _selectionRevision;
-    private string? _pendingError;
+    private string? _pendingError => _selection.Error;
     private OverlayThemePalette _systemPalette = OverlayThemePalette.For(OverlayThemeKind.Dark);
 
     public OverlayContext(string sessionRoot, string? settingsPath = null, bool useSavedRoot = true)
@@ -53,6 +53,7 @@ internal sealed class OverlayContext : ApplicationContext
         _settings = OverlaySettings.Load(_settingsPath);
         try { _monitor = new TokenLogMonitor(useSavedRoot ? _settings.SessionRoot ?? sessionRoot : sessionRoot); }
         catch (ArgumentException) { _monitor = new TokenLogMonitor(sessionRoot); }
+        _routeMonitor = new CodexVisibleThreadMonitor(_monitor.SessionRoot);
         _manualThreadId = _settings.PinnedThreadId;
         _presentation = OverlayPresentationBuilder.CreateWaiting(
             "正在寻找当前 Codex 会话…",
@@ -71,11 +72,12 @@ internal sealed class OverlayContext : ApplicationContext
         _pinSessionMenuItem = new ToolStripMenuItem("锁定当前会话") { CheckOnClick = true, Checked = _manualThreadId is not null };
         _pinSessionMenuItem.CheckedChanged += (_, _) =>
         {
-            _manualThreadId = _pinSessionMenuItem.Checked ? _pendingThreadId : null;
+            _manualThreadId = _pinSessionMenuItem.Checked ? _manualThreadId ?? _pendingThreadId : null;
             _settings.PinnedThreadId = _manualThreadId;
             _settings.Save(_settingsPath);
             _selectionRevision++;
             _pinSessionMenuItem.Text = _manualThreadId is not null ? "已锁定当前会话" : "锁定当前会话";
+            Tick();
         };
         menu.Items.Add(_pinSessionMenuItem);
         var selectItem = new ToolStripMenuItem("手动选择并锁定会话…");
@@ -184,7 +186,7 @@ internal sealed class OverlayContext : ApplicationContext
         UpdateFieldChecks();
         UpdateCollapsedFieldChecks();
 
-        _timer = new System.Windows.Forms.Timer { Interval = 350 };
+        _timer = new System.Windows.Forms.Timer { Interval = 150 };
         _timer.Tick += (_, _) => Tick();
         _outsideClickTimer = new System.Windows.Forms.Timer { Interval = 40 };
         _outsideClickTimer.Tick += (_, _) => PollOutsidePointer();
@@ -320,26 +322,11 @@ internal sealed class OverlayContext : ApplicationContext
             return;
         }
 
-        var route = _routeMonitor.GetStatus();
-        _pendingRouteStatus = route;
-        var selectedId = FollowSelection.Resolve(route, _manualThreadId);
-        var activeThreadChanged = !string.Equals(selectedId, _observedThreadId, StringComparison.OrdinalIgnoreCase);
-        if (activeThreadChanged)
-        {
-            _observedThreadId = selectedId;
-            _pendingThreadId = selectedId;
-            _pendingSnapshot = _lastSnapshot = null;
-            _pendingError = null;
-            _interaction.CollapseForHostChange();
-            StopOutsideClickPolling();
-        }
-        _pinSessionMenuItem.Enabled = selectedId is not null;
-        if (_pendingSnapshot is not null && string.Equals(_pendingSnapshot.ThreadId, selectedId, StringComparison.OrdinalIgnoreCase))
-            _lastSnapshot = _pendingSnapshot;
+        var activeThreadChanged = ObserveSelection();
+        _pinSessionMenuItem.Enabled = _pendingThreadId is not null;
         RefreshPresentation();
         UpdateSessionMenuText();
-        if (_lastSnapshot is not null)
-            _trayIcon.Text = TrimTrayText($"Codex {OverlayPresentationBuilder.ShortThreadId(_lastSnapshot.ThreadId)} · {OverlayPresentationBuilder.FormatTokenCount(_lastSnapshot.EffectiveTotalTokens)} tok");
+        RefreshTrayText();
         RequestBackgroundPoll();
 
         if (_manualAttachment.IsEditing)
@@ -390,36 +377,63 @@ internal sealed class OverlayContext : ApplicationContext
         }
 
         var uiScheduler = TaskScheduler.FromCurrentSynchronizationContext();
-        var revision = _selectionRevision;
-        var route = _routeMonitor.GetStatus();
+        var request = _selection.Request();
         var manualId = _manualThreadId;
         var root = _queuedRoot;
-        var selected = FollowSelection.Resolve(route, manualId);
+        var cancellation = _readCancellation = new CancellationTokenSource();
         _ = Task.Run(() =>
             {
                 if (root is not null) _monitor.SetRoot(root);
                 _monitor.PinActiveSession = false;
-                _monitor.PreferredThreadId = selected;
+                cancellation.Token.ThrowIfCancellationRequested();
+                _monitor.PreferredThreadId = request.ThreadId;
                 if (manualId is not null) _monitor.SelectManual(manualId);
-                var snapshot = _monitor.Poll();
+                var snapshot = _monitor.Poll(cancellationToken: cancellation.Token);
                 return (Snapshot: snapshot, Error: _monitor.LastError);
             })
             .ContinueWith(task =>
             {
                 try
                 {
-                    if (Volatile.Read(ref _disposed) == 0 && task.Status == TaskStatus.RanToCompletion &&
-                        revision == _selectionRevision && (manualId is not null || _routeMonitor.GetStatus().Version == route.Version))
+                    if (Volatile.Read(ref _disposed) == 0)
                     {
-                        _pendingSnapshot = task.Result.Snapshot;
-                        if (_pendingSnapshot is null) _lastSnapshot = null;
-                        _pendingError = task.Result.Error;
-                        if (_queuedRoot == root) _queuedRoot = null;
+                        ObserveSelection();
+                        if (task.Status == TaskStatus.RanToCompletion)
+                        {
+                            _selection.TryPublish(request, task.Result.Snapshot, task.Result.Error);
+                            if (_queuedRoot == root) _queuedRoot = null;
+                        }
+                        else if (task.IsFaulted && task.Exception!.GetBaseException() is not OperationCanceledException)
+                            _selection.TryPublish(request, null, "读取暂时失败，正在重试");
+                        RefreshPresentation(); UpdateSessionMenuText(); RefreshTrayText();
                     }
                 }
-                finally { Interlocked.Exchange(ref _pollInFlight, 0); }
+                finally
+                {
+                    if (ReferenceEquals(_readCancellation, cancellation)) _readCancellation = null;
+                    cancellation.Dispose();
+                    Interlocked.Exchange(ref _pollInFlight, 0);
+                }
+                // Coalesce rapid switches to the latest selection as soon as the cancelled read exits.
+                if (request.Revision != _selection.Revision && Volatile.Read(ref _disposed) == 0) RequestBackgroundPoll();
             }, CancellationToken.None, TaskContinuationOptions.None, uiScheduler);
     }
+
+    private bool ObserveSelection()
+    {
+        _pendingRouteStatus = _routeMonitor.GetStatus();
+        if (!_selection.Observe(_pendingRouteStatus, _manualThreadId, _selectionRevision)) return false;
+        _readCancellation?.Cancel();
+        _interaction.CollapseForHostChange(); StopOutsideClickPolling();
+        return true;
+    }
+
+    private void RefreshTrayText() => _trayIcon.Text = _lastSnapshot is null ? "Codex 会话用量 · 等待当前会话" :
+        TrimTrayText($"Codex {OverlayPresentationBuilder.ShortThreadId(_lastSnapshot.ThreadId)} · {OverlayPresentationBuilder.FormatTokenCount(_lastSnapshot.EffectiveTotalTokens)} tok");
+
+    internal ConversationProbeSample ReadConversationProbeSample() => new(DateTime.UtcNow,
+        _pendingRouteStatus, _selection.Revision, _selection.ThreadId, _lastSnapshot?.ThreadId,
+        _lastSnapshot?.EffectiveTotalTokens, _lastSnapshot?.TurnCount, _selection.Error);
 
     private void RefreshPresentation()
     {
@@ -441,11 +455,9 @@ internal sealed class OverlayContext : ApplicationContext
         if (picker.ShowDialog() == DialogResult.OK && picker.SelectedThreadId is { } id)
         {
             _manualThreadId = id;
-            _pendingThreadId = id;
             _settings.PinnedThreadId = id;
             _settings.Save(_settingsPath);
             _pinSessionMenuItem.Checked = true;
-            _pendingSnapshot = _lastSnapshot = null;
             _selectionRevision++;
         }
         if (_currentTarget is not null) SetForegroundWindow(_currentTarget.HostWindow.Handle);
@@ -459,8 +471,9 @@ internal sealed class OverlayContext : ApplicationContext
         _queuedRoot = picker.SelectedPath;
         _settings.SessionRoot = picker.SelectedPath;
         _settings.Save(_settingsPath);
-        _pendingSnapshot = _lastSnapshot = null;
         _selectionRevision++;
+        _routeMonitor.SetRoot(_queuedRoot);
+        ObserveSelection(); RefreshPresentation(); RefreshTrayText(); RequestBackgroundPoll();
         if (_currentTarget is not null) SetForegroundWindow(_currentTarget.HostWindow.Handle);
     }
 
@@ -961,6 +974,7 @@ internal sealed class OverlayContext : ApplicationContext
             _outsideClickTimer.Dispose();
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
+            _readCancellation?.Cancel();
             _routeMonitor.Dispose();
             _monitor.Dispose();
             DisposeThemeAndForms();

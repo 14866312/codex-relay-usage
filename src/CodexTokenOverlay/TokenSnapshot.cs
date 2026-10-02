@@ -44,13 +44,14 @@ internal sealed record TokenSnapshot(
 
 internal static class FollowSelection
 {
-    // Fail closed: IPC ambiguity/disconnection must never select the newest log.
+    // Fail closed: page ambiguity/disconnection must never select the newest log.
     public static string? Resolve(ActiveThreadRouteStatus route, string? manualId) =>
         !string.IsNullOrWhiteSpace(manualId) ? manualId :
         route.IsConnected && route.ActiveWindowCount == 1 ? route.ThreadId : null;
     public static string Status(ActiveThreadRouteStatus route, string? manualId) =>
         !string.IsNullOrWhiteSpace(manualId) ? "手动锁定" :
         route.ActiveWindowCount > 1 ? "多窗口：请手动选择会话" :
-        route.IsConnected && !string.IsNullOrWhiteSpace(route.ThreadId) ? "自动跟随" :
-        route.IsConnected ? "无法识别当前对话 · 可手动选择" : "IPC 未连接 · 可手动选择";
+        route.IsConnected && route.ActiveWindowCount == 1 && !string.IsNullOrWhiteSpace(route.ThreadId) ? "自动跟随" :
+        !route.IsConnected ? "IPC 未连接 · 可手动选择" :
+        (route.LastError ?? (route.ActiveWindowCount == 0 ? "未找到可见 Codex 主窗口" : "无法识别当前对话")) + " · 可手动选择";
 }

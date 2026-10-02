@@ -16,6 +16,27 @@ internal static class ProbeRunner
 
     public static bool TryRun(IReadOnlyList<string> args, string sessionRoot)
     {
+        // Exercise the same UI selection, cancellation and publication path used by the shipped overlay.
+        // This opt-in local trace contains IDs/totals only and never saves conversation text or settings.
+        if (args.Count >= 2 && args[0].Equals("--follow-probe", StringComparison.OrdinalIgnoreCase))
+        {
+            PrepareWindowProbeDpiAwareness();
+            var seconds = args.Count >= 3 && int.TryParse(args[2], out var duration) ? Math.Clamp(duration, 1, 120) : 30;
+            var settingsPath = Path.Combine(Path.GetTempPath(), "CodexRelayUsage-probe-" + Guid.NewGuid().ToString("N"), "settings.json");
+            using var context = new OverlayContext(sessionRoot, settingsPath, useSavedRoot: false);
+            using var samples = new System.Windows.Forms.Timer { Interval = 50 };
+            using var stream = new StreamWriter(args[1], false, new UTF8Encoding(false)) { AutoFlush = true };
+            var deadline = DateTime.UtcNow.AddSeconds(seconds);
+            samples.Tick += (_, _) =>
+            {
+                stream.WriteLine(JsonSerializer.Serialize(context.ReadConversationProbeSample()));
+                if (DateTime.UtcNow >= deadline) context.ExitThread();
+            };
+            samples.Start();
+            Application.Run(context);
+            return true;
+        }
+
         if (args.Count >= 2 && args[0].Equals("--theme-probe", StringComparison.OrdinalIgnoreCase))
         {
             PrepareWindowProbeDpiAwareness();
@@ -76,7 +97,7 @@ internal static class ProbeRunner
             return true;
         }
 
-        // IPC 探针用于验证 Codex 当前可见任务广播，不启动悬浮条。
+        // Raw IPC subscriptions are diagnostic only; they do not identify the currently visible page.
         if (args.Count >= 2 && args[0].Equals("--ipc-probe", StringComparison.OrdinalIgnoreCase))
         {
             using var routeMonitor = new CodexIpcActiveThreadMonitor();

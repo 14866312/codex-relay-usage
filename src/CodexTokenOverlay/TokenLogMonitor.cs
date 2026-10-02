@@ -13,7 +13,9 @@ internal sealed class TokenLogMonitor : IDisposable
     private string _root;
     private string? _preferred, _pinnedId, _activeId;
     private bool _pinned;
-    private IncrementalSessionReader? _reader;
+    internal const int ReaderCacheCapacity = 8;
+    private readonly Dictionary<string, IncrementalSessionReader> _readers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly LinkedList<string> _readerOrder = new();
     private long _version;
     private int _dirty = 1;
     private DateTime _lastScan;
@@ -42,13 +44,15 @@ internal sealed class TokenLogMonitor : IDisposable
     {
         lock (_sync)
         {
-            _root = NormalizeRoot(root);
+            var normalized = NormalizeRoot(root);
+            if (string.Equals(_root, normalized, StringComparison.OrdinalIgnoreCase)) return;
+            _root = normalized;
             foreach (var watcher in _watchers) watcher.Dispose();
-            _watchers.Clear(); _catalog.Clear(); _reader = null; _version++; _lastScan = default;
+            _watchers.Clear(); _catalog.Clear(); _readers.Clear(); _readerOrder.Clear(); _version++; _lastScan = default;
             Interlocked.Exchange(ref _dirty, 1); CreateWatchers();
         }
     }
-    private static string NormalizeRoot(string path)
+    internal static string NormalizeRoot(string path)
     {
         path = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path));
         var name = System.IO.Path.GetFileName(System.IO.Path.TrimEndingDirectorySeparator(path));
@@ -86,13 +90,15 @@ internal sealed class TokenLogMonitor : IDisposable
     {
         lock (_sync) { Scan(); return _catalog.Values.OrderByDescending(s => s.WriteUtc).ToArray(); }
     }
-    private void Scan()
+    private void Scan(CancellationToken cancellationToken = default)
     {
         var next = new Dictionary<string, SessionEntry>(StringComparer.OrdinalIgnoreCase);
-        var titles = ReadTitles();
+        cancellationToken.ThrowIfCancellationRequested();
+        var titles = ReadTitles(cancellationToken);
         LastError = null;
         foreach (var root in Roots())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!Directory.Exists(root)) continue;
             try
             {
@@ -100,6 +106,7 @@ internal sealed class TokenLogMonitor : IDisposable
                     { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint });
                 foreach (var path in paths)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     try
                     {
                         var file = new FileInfo(path);
@@ -127,7 +134,7 @@ internal sealed class TokenLogMonitor : IDisposable
         _catalog = next; _lastScan = DateTime.UtcNow;
         CreateWatchers();
     }
-    private Dictionary<string, string> ReadTitles()
+    private Dictionary<string, string> ReadTitles(CancellationToken cancellationToken)
     {
         var titles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try
@@ -138,6 +145,7 @@ internal sealed class TokenLogMonitor : IDisposable
             using var reader = new StreamReader(file);
             while (reader.ReadLine() is { } line)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 try { using var doc = JsonDocument.Parse(line); var id = IncrementalSessionReader.String(doc.RootElement, "id");
                     var title = IncrementalSessionReader.String(doc.RootElement, "thread_name");
                     if (id is not null && title is not null) titles[id] = title; } catch (JsonException) { }
@@ -145,24 +153,32 @@ internal sealed class TokenLogMonitor : IDisposable
         } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return titles;
     }
-    public TokenSnapshot? Poll(bool forceFullScan = false)
+    public TokenSnapshot? Poll(bool forceFullScan = false, CancellationToken cancellationToken = default)
     {
         lock (_sync)
         {
             if (_disposed) return null;
+            cancellationToken.ThrowIfCancellationRequested();
             var selected = _pinned ? _pinnedId : _preferred;
             if (!string.Equals(selected, _activeId, StringComparison.OrdinalIgnoreCase))
-            { _activeId = selected; _reader = null; _version++; }
-            if (forceFullScan || Interlocked.Exchange(ref _dirty, 0) != 0 || DateTime.UtcNow - _lastScan >= TimeSpan.FromSeconds(1)) Scan();
+            { _activeId = selected; _version++; }
             if (selected is null) return null;
-            if (!_catalog.TryGetValue(selected, out var entry)) { _reader = null; LastError ??= "等待所选会话日志"; return null; }
-            if (_reader is null || !string.Equals(_reader.Path, entry.LogPath, StringComparison.OrdinalIgnoreCase))
-                _reader = new IncrementalSessionReader(entry.LogPath, selected);
-            try { var snapshot = _reader.Read(); LastError = null; return snapshot; }
+            if (forceFullScan || Interlocked.Exchange(ref _dirty, 0) != 0 || DateTime.UtcNow - _lastScan >= TimeSpan.FromSeconds(1)) Scan(cancellationToken);
+            if (!_catalog.TryGetValue(selected, out var entry)) { _readers.Remove(selected); _readerOrder.Remove(selected); LastError ??= "等待所选会话日志"; return null; }
+            if (!_readers.TryGetValue(selected, out var reader) || !string.Equals(reader.Path, entry.LogPath, StringComparison.OrdinalIgnoreCase))
+                _readers[selected] = reader = new IncrementalSessionReader(entry.LogPath, selected);
+            _readerOrder.Remove(selected); _readerOrder.AddLast(selected);
+            while (_readers.Count > ReaderCacheCapacity)
+            {
+                _readers.Remove(_readerOrder.First!.Value); _readerOrder.RemoveFirst();
+            }
+            try { var snapshot = reader.Read(cancellationToken); LastError = null; return snapshot; }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            { LastError = "会话日志暂时无法读取"; return _reader.Snapshot; }
+            { LastError = "会话日志暂时无法读取"; return reader.Snapshot; }
         }
     }
+    internal long? ReaderBytesRead(string threadId)
+    { lock (_sync) return _readers.TryGetValue(threadId, out var reader) ? reader.TotalBytesRead : null; }
     public void Dispose()
     {
         lock (_sync) { _disposed = true; foreach (var watcher in _watchers) watcher.Dispose(); _watchers.Clear(); }
@@ -172,7 +188,7 @@ internal sealed class TokenLogMonitor : IDisposable
 internal sealed class IncrementalSessionReader(string path, string threadId)
 {
     private const int MaxLineBytes = 32 * 1024 * 1024;
-    private long _offset;
+    private long _offset, _knownLength;
     private readonly MemoryStream _partial = new();
     private readonly HashSet<string> _turns = new(StringComparer.Ordinal);
     private bool _skipLine, _usageRecorded, _totalTokenInvalid;
@@ -181,20 +197,26 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
     private string? _model, _parseIssue;
     public string Path { get; } = path;
     public TokenSnapshot? Snapshot { get; private set; }
+    internal long TotalBytesRead { get; private set; }
+    internal long ReadOffset => _offset;
 
-    public TokenSnapshot? Read()
+    public TokenSnapshot? Read(CancellationToken cancellationToken = default, Action? blockProcessed = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var info = new FileInfo(Path);
         using var stream = new FileStream(Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         // Truncation, replacement, or same-length rewrite restarts this reader.
         if (stream.Length < _offset || (_offset > 0 && (_creationUtc != info.CreationTimeUtc ||
-            (stream.Length == _offset && info.LastWriteTimeUtc != _writeUtc)))) Reset();
+            (stream.Length == _knownLength && info.LastWriteTimeUtc != _writeUtc)))) Reset();
         stream.Position = _offset;
+        // Persist the fingerprint at open so a cancelled read can resume even when it ended at EOF.
+        _writeUtc = info.LastWriteTimeUtc; _creationUtc = info.CreationTimeUtc; _knownLength = stream.Length;
         var buffer = new byte[64 * 1024];
-        int count;
-        while ((count = stream.Read(buffer, 0, buffer.Length)) > 0)
+        while (true)
         {
-            _offset += count;
+            cancellationToken.ThrowIfCancellationRequested();
+            var count = stream.Read(buffer, 0, buffer.Length);
+            if (count == 0) break;
             var start = 0;
             for (var i = 0; i < count; i++)
             {
@@ -204,8 +226,11 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
                 _partial.SetLength(0); _skipLine = false; start = i + 1;
             }
             Append(buffer.AsSpan(start, count - start));
+            // Offset and partial-line state advance together, only between complete blocks.
+            _offset += count; TotalBytesRead += count;
+            blockProcessed?.Invoke();
         }
-        info.Refresh(); _writeUtc = info.LastWriteTimeUtc; _creationUtc = info.CreationTimeUtc;
+        info.Refresh(); _writeUtc = info.LastWriteTimeUtc; _creationUtc = info.CreationTimeUtc; _knownLength = stream.Length;
         Snapshot = new TokenSnapshot(threadId, Path, _total, _input, _cache, _output, _reasoning,
             _contextUsed, _contextWindow, _updatedUtc, _model, _turns.Count, _parseIssue, _usageRecorded, _totalTokenInvalid);
         return Snapshot;
@@ -218,7 +243,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
     }
     private void Reset()
     {
-        _offset = 0; _partial.SetLength(0); _turns.Clear(); _skipLine = false; _usageRecorded = false; _totalTokenInvalid = false;
+        _offset = _knownLength = 0; _partial.SetLength(0); _turns.Clear(); _skipLine = false; _usageRecorded = false; _totalTokenInvalid = false;
         _total = _input = _cache = _output = _reasoning = _contextUsed = _contextWindow = null;
         _model = _parseIssue = null; _updatedUtc = default; Snapshot = null;
     }

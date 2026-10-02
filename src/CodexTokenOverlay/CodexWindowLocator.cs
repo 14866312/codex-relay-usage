@@ -489,6 +489,23 @@ internal static class CodexWindowLocator
         return enumerationSucceeded;
     }
 
+    internal static IReadOnlyList<WindowCandidateFacts> GetVisibleMainWindows()
+    {
+        var windows = new List<WindowCandidateFacts>();
+        var confirmedProcesses = new Dictionary<uint, bool>();
+        EnumWindows((handle, _) =>
+        {
+            if (!IsWindowVisible(handle) || IsIconic(handle)) return true;
+            GetWindowThreadProcessId(handle, out var processId);
+            if (!confirmedProcesses.TryGetValue(processId, out var confirmed))
+                confirmedProcesses[processId] = confirmed = IsCodexDesktopProcess(processId);
+            if (confirmed && TryReadCandidate(handle, processId, out var candidate) && CodexWindowClassifier.IsHost(candidate))
+                windows.Add(candidate);
+            return true;
+        }, IntPtr.Zero);
+        return windows;
+    }
+
     private static bool TryEnumerateCandidates(
         uint expectedProcessId,
         out IReadOnlyList<WindowCandidateFacts> candidates)
