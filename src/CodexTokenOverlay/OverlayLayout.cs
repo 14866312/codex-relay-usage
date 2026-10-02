@@ -77,7 +77,10 @@ internal static class OverlayLayoutCalculator
     private const int ExpandedWidthDip = 450;
     private const int CapsulePanelGapDip = 6;
     private const int CaptionSafetyGapDip = 8;
-    private const int TitleLeftReserveDip = 160;
+    // Back/forward, sidebar toggle and File/Edit/View/Help stay unobstructed.
+    private const int TitleLeftReserveDip = 360;
+    private const int FallbackCaptionHeightDip = 34;
+    private const int FallbackCaptionButtonWidthDip = 46;
     private const int PanelChromeHeightDip = 148;
     private const int NormalRowHeightDip = 32;
     private const int MinimumRowHeightDip = 24;
@@ -177,6 +180,7 @@ internal static class OverlayLayoutCalculator
         }
 
         var maximumCapsuleRight = workingArea.Right;
+        var capsuleInTitleBar = false;
         var visibleHost = Intersect(PreferredHostBounds(host), workingArea);
         var captionSafetyGap = ScaleSystemDip(CaptionSafetyGapDip, host.Dpi);
         if (!visibleHost.IsEmpty &&
@@ -191,6 +195,7 @@ internal static class OverlayLayoutCalculator
             capsuleScreen.Bottom > captionTop)
         {
             maximumCapsuleRight = Math.Min(maximumCapsuleRight, captionSafeRight);
+            capsuleInTitleBar = true;
         }
 
         var minimumCapsuleX = workingArea.Left + panelWidth - capsuleScreen.Width;
@@ -210,7 +215,7 @@ internal static class OverlayLayoutCalculator
         var panelLeft = capsuleScreen.Right - panelWidth;
         var panelGap = ScaleOverlayDip(CapsulePanelGapDip, host.Dpi, scalePercent);
         var availableAbove = capsuleScreen.Top - panelGap - workingArea.Top;
-        if (TryGetPanelSize(
+        if (!capsuleInTitleBar && TryGetPanelSize(
             request,
             host.Dpi,
             scalePercent,
@@ -394,7 +399,12 @@ internal static class OverlayLayoutCalculator
                 capsuleSize = twoFields;
                 return true;
             }
-
+        }
+        // Prefer shrinking the complete strip before removing the second field.
+        for (var candidate = requestedScale;
+             candidate >= ManualAttachmentRules.MinimumScalePercent;
+             candidate--)
+        {
             var primary = GetCollapsedSize(dpi, candidate, CollapsedDisplayMode.PrimaryOnly);
             if (primary.Width <= availableWidth && primary.Height <= captionHeight)
             {
@@ -607,12 +617,19 @@ internal static class OverlayLayoutCalculator
             return false;
         }
 
+        // Chromium custom title bars may not report DWM caption bounds. The
+        // system's small caption metrics undercount their window-control area.
         var reservedWidth =
-            (3 * metrics.CaptionButtonWidth) +
+            Math.Max(3 * metrics.CaptionButtonWidth,
+                ScaleSystemDip(3 * FallbackCaptionButtonWidthDip, host.Dpi)) +
             (2 * metrics.FrameWidth) +
             (2 * metrics.PaddedBorderWidth);
         var rawCaptionTop = host.WindowBounds.Top + metrics.FrameHeight + metrics.PaddedBorderWidth;
-        var rawCaptionBottom = rawCaptionTop + metrics.CaptionButtonHeight;
+        var captionCenter = rawCaptionTop + metrics.CaptionButtonHeight / 2;
+        var fallbackHeight = Math.Max(metrics.CaptionButtonHeight,
+            ScaleSystemDip(FallbackCaptionHeightDip, host.Dpi));
+        rawCaptionTop = Math.Max(host.WindowBounds.Top, captionCenter - fallbackHeight / 2);
+        var rawCaptionBottom = Math.Min(host.WindowBounds.Bottom, rawCaptionTop + fallbackHeight);
         captionTop = Math.Max(visibleHost.Top, rawCaptionTop);
         captionBottom = Math.Min(visibleHost.Bottom, rawCaptionBottom);
         safeRight = host.WindowBounds.Right - reservedWidth - safetyGap;

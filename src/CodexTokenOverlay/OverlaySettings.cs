@@ -106,7 +106,7 @@ internal sealed class OverlaySettings
         public double? OffsetYDip { get; set; }
     }
 
-    public const int CurrentSettingsVersion = 2;
+    public const int CurrentSettingsVersion = 3;
     public string ThemeMode { get; set; } = "system";
     public string? SessionRoot { get; set; }
     public string? PinnedThreadId { get; set; }
@@ -128,7 +128,7 @@ internal sealed class OverlaySettings
             VisibleFields = DefaultVisibleFields,
             CollapsedPrimaryField = DisplayField.Total,
             CollapsedSecondaryField = DisplayField.CacheHitRate,
-            ManualPlacementEnabled = true,
+            ManualPlacementEnabled = false,
             MainAttachment = ManualAttachmentRules.DefaultMainAttachment,
             OverlayScalePercent = ManualAttachmentRules.DefaultScalePercent
         };
@@ -173,15 +173,6 @@ internal sealed class OverlaySettings
                 return new OverlaySettingsLoadResult(CreateDefault(), false);
             }
 
-            if (!persisted.SettingsVersion.HasValue)
-            {
-                var migrated = CreateDefault();
-                migrated.VisibleFields = DisplayFieldRules.SanitizeVisible(
-                    (DisplayField)(persisted.VisibleFields ?? (int)DefaultVisibleFields));
-                migrated.ManualPlacementEnabled = persisted.ManualPlacementEnabled ?? false;
-                return new OverlaySettingsLoadResult(migrated, true);
-            }
-
             var settings = CreateDefault();
             settings.ThemeMode = persisted.ThemeMode is "light" or "dark" ? persisted.ThemeMode : "system";
             settings.SessionRoot = persisted.SessionRoot;
@@ -198,7 +189,15 @@ internal sealed class OverlaySettings
 
             settings.OverlayScalePercent = ManualAttachmentRules.SanitizeScale(
                 persisted.OverlayScalePercent);
-            return new OverlaySettingsLoadResult(settings, false);
+            var migratePlacement = !persisted.SettingsVersion.HasValue
+                || persisted.SettingsVersion.Value < CurrentSettingsVersion;
+            if (migratePlacement)
+            {
+                // Version 3 moves existing installations out of the input controls.
+                // Keep the user's theme, log root, selected fields, pin and scale.
+                settings.ResetToTitleBar(resetScale: false);
+            }
+            return new OverlaySettingsLoadResult(settings, migratePlacement);
         }
         catch (JsonException)
         {
@@ -246,6 +245,17 @@ internal sealed class OverlaySettings
     }
 
     public void Save(string? settingsPath = null) => TrySave(settingsPath);
+
+    public void ResetToTitleBar(bool resetScale = true)
+    {
+        ManualPlacementEnabled = false;
+        AnchorMode = AnchorMode.TitleBarTopRight;
+        MainAttachment = ManualAttachmentRules.DefaultMainAttachment;
+        if (resetScale)
+        {
+            OverlayScalePercent = ManualAttachmentRules.DefaultScalePercent;
+        }
+    }
 
     public bool SelectCollapsedField(CollapsedSlot slot, DisplayField field)
     {

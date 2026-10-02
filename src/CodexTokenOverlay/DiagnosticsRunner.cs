@@ -37,9 +37,9 @@ internal static class DiagnosticsRunner
             var presentation = OverlayPresentationBuilder.Create(Example(), DisplayField.Total, DisplayField.CacheHitRate, settings.VisibleFields)
                 with { FollowText = "自动跟随" };
             form.SetPresentation(presentation); form.ApplyTheme(OverlayThemePalette.For(theme));
-            var host = Host((uint)form.DeviceDpi);
-            var layout = OverlayLayoutCalculator.Calculate(new(host, AnchorMode.InsideBottomRight, expanded,
-                presentation.ExpandedRows.Count, true, new Point(700, 800)));
+            var host = TitleBarPlacementTests.Host((uint)form.DeviceDpi);
+            var layout = OverlayLayoutCalculator.Calculate(new(host, settings.AnchorMode, expanded,
+                presentation.ExpandedRows.Count, true));
             form.ApplyLayout(layout);
             using var bitmap = new Bitmap(layout.WindowBounds.Width, layout.WindowBounds.Height);
             form.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
@@ -166,6 +166,7 @@ internal static class DiagnosticsRunner
             var saved = Path.Combine(directory, "settings.json"); settings.Save(saved); var loaded = OverlaySettings.Load(saved);
             Check("settings persistence", loaded.PinnedThreadId == "b" && loaded.SessionRoot == directory && loaded.CollapsedSecondaryField == DisplayField.CacheHitRate);
             Check("corrupt settings recover", OverlaySettings.ParseJson("bad-json").Settings.CollapsedPrimaryField == DisplayField.Total);
+            TitleBarPlacementTests.Run(Check, directory);
             foreach (var dpi in new uint[] { 96, 120, 144, 192 })
             foreach (var scale in new[] { 60, 100, 130 })
             {

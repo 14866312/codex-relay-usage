@@ -7,10 +7,10 @@
     <Nullable>enable</Nullable>
     <AssemblyName>CodexRelayUsage</AssemblyName>
     <RootNamespace>CodexTokenOverlay</RootNamespace>
-    <Version>1.0.0</Version>
-    <Authors>soleillevant0125</Authors>
+    <Version>1.0.1</Version>
+    <Authors>14866312;soleillevant0125</Authors>
     <Description>A read-only Windows overlay for Codex Desktop token usage.</Description>
-    <RepositoryUrl>https://github.com/soleillevant0125/codex-token-overlay</RepositoryUrl>
+    <RepositoryUrl>https://github.com/14866312/codex-relay-usage</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PublishSingleFile Condition="'$(RuntimeIdentifier)' != ''">true</PublishSingleFile>
     <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>

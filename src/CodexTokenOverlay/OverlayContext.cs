@@ -95,12 +95,12 @@ internal sealed class OverlayContext : ApplicationContext
         _cancelManualMenuItem = new ToolStripMenuItem("取消调整") { Visible = false };
         _cancelManualMenuItem.Click += (_, _) => CancelManualEditing();
         menu.Items.Add(_cancelManualMenuItem);
-        _resetManualMenuItem = new ToolStripMenuItem("重置到 Codex 底部");
+        _resetManualMenuItem = new ToolStripMenuItem("重置到顶部菜单空白区");
         _resetManualMenuItem.Click += (_, _) => ResetManualPlacement();
         menu.Items.Add(_resetManualMenuItem);
 
         _traditionalMenuItem = new ToolStripMenuItem("传统定位");
-        AddAnchorMenu(_traditionalMenuItem, "标题栏右上", AnchorMode.TitleBarTopRight);
+        AddAnchorMenu(_traditionalMenuItem, "顶部菜单空白区（默认）", AnchorMode.TitleBarTopRight);
         AddAnchorMenu(_traditionalMenuItem, "自动吸附", AnchorMode.Auto);
         AddAnchorMenu(_traditionalMenuItem, "窗口内右上", AnchorMode.InsideTopRight);
         AddAnchorMenu(_traditionalMenuItem, "窗口内右下", AnchorMode.InsideBottomRight);
@@ -561,7 +561,8 @@ internal sealed class OverlayContext : ApplicationContext
         _saveFailureNotified = false;
         var transition = _manualAttachment.BeginEdit(
             _settingsSnapshotBeforeEdit,
-            CreateAttachmentTargets(_currentTarget));
+            CreateAttachmentTargets(_currentTarget),
+            _form.CurrentLayout);
         ApplyEditTransition(_currentTarget, transition, applyLayout: true);
         _form.BeginEditMode(transition.Draft.ScalePercent);
         if (!_form.Visible)
@@ -690,9 +691,7 @@ internal sealed class OverlayContext : ApplicationContext
             return;
         }
 
-        _settings.ManualPlacementEnabled = true;
-        _settings.MainAttachment = ManualAttachmentRules.DefaultMainAttachment;
-        _settings.OverlayScalePercent = ManualAttachmentRules.DefaultScalePercent;
+        _settings.ResetToTitleBar();
         if (!_settings.TrySave(_settingsPath))
         {
             _trayIcon.ShowBalloonTip(

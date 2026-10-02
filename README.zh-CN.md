@@ -1,8 +1,8 @@
-# Codex 会话用量悬浮工具 1.0.0
+# Codex 会话用量悬浮工具 1.0.1
 
 为使用 API 中转站模型的 Windows Codex Desktop 用户显示当前会话用量。来源始终为 **Codex 本地日志**，无需 API 密钥或 ChatGPT 登录。
 
-界面参考你提供的截图：收起显示 `5M tok · 缓存命中 94%`，旁边显示已记录轮次与最近调用上下文占用。点击向上展开精确数值，空间不足时向下展开。
+收起显示 `5M tok · 缓存命中 94%`，旁边显示已记录轮次与最近调用上下文占用。默认放在顶部“文件／编辑／视图／帮助”右侧的空白区，避开菜单和窗口控制按钮；点击向下展开明细。
 
 ![浅色展开示例](previews/light-expanded.png)
 
@@ -10,10 +10,10 @@
 
 ## 启动与操作
 
-1. 解压 `CodexRelayUsage-1.0.0-win-x64.zip`，进入同名文件夹，双击 `CodexRelayUsage.exe`。成品自带运行时，不必安装 .NET SDK。同一时间只允许运行一个工具实例。
-2. 打开 Codex 主窗口并选择一个对话。初始位置在窗口底部中央；最小化或切到其他应用时隐藏，回到 Codex 时恢复。
-3. 首次位置如果没有正好落在输入框下方，右击系统托盘“Codex 会话用量”图标，选择“调整位置和大小…”。拖动悬浮条，拖右下角缩放，按 Enter 或托盘“完成调整”保存，Esc 取消。保存相对窗口的位置，随后跟随窗口移动和缩放；可“重置到 Codex 底部”。首次摆放需要手动校准，工具不识别输入框内部坐标。
-4. 点击 Token 区域展开，点击外部收起。正常点击不抢 Codex 输入焦点；位置编辑、会话选择器和托盘菜单属于主动操作。
+1. 解压 `CodexRelayUsage-1.0.1-win-x64.zip`，进入同名文件夹，双击 `CodexRelayUsage.exe`。成品自带运行时，不必安装 .NET SDK。同一时间只允许运行一个工具实例。
+2. 打开 Codex 主窗口并选择一个对话。初始位置在顶部菜单右侧的空白区；最小化或切到其他应用时隐藏，回到 Codex 时恢复。
+3. 如需自定义位置，右击系统托盘“Codex 会话用量”图标，选择“调整位置和大小…”。拖动悬浮条，拖右下角缩放，按 Enter 或托盘“完成调整”保存，Esc 取消。保存相对窗口的位置，随后跟随窗口移动和缩放；可“重置到顶部菜单空白区”。自动定位保留左侧菜单及右侧最小化、最大化、关闭按钮区域；窗口变窄时先缩小完整悬浮条，再仅显示主指标，空间仍不足时隐藏。
+4. 点击 Token 区域向下展开，点击外部收起。正常点击不抢 Codex 输入焦点；位置编辑、会话选择器和托盘菜单属于主动操作。
 5. 托盘“主题”可选跟随 Windows、浅色或深色；“显示字段”控制明细，“收起时显示”改变两个主指标。推理 tokens 可选，默认关闭。
 6. “暂时隐藏”不会退出统计进程；“退出”结束程序。没有自动开机启动。托盘图标可能在 Windows 隐藏图标菜单里。
 
@@ -35,7 +35,7 @@
 
 会话发现和首次读取在后台运行，当前文件随后增量读取。文件变化通知配合一秒目录轮询，未写完的 JSON 行等补齐再处理。同一会话的活动和归档副本去重，只选一个文件。
 
-设置位于 `%LOCALAPPDATA%/CodexRelayUsage/settings.json`，记录位置、60%–130% 缩放、主题、字段、日志目录和锁定 ID。
+设置位于 `%LOCALAPPDATA%/CodexRelayUsage/settings.json`，记录位置、60%–130% 缩放、主题、字段、日志目录和锁定 ID。从 1.0.0 升级时首次将旧位置迁移到顶部，保留主题、字段、目录、锁定 ID 和缩放偏好；以后保存的手动位置会继续保留。
 
 程序不读取 API 密钥配置、不改写会话日志、不调用中转接口、不开放 HTTP 服务；读取元数据和 usage 事件，不保存正文副本。不要把真实日志或个人设置加入分享的源码包。
 
@@ -83,8 +83,8 @@
 单独验证与校验：
 
 ```powershell
-.\scripts\Verify.ps1 -ExecutablePath ".\artifacts\CodexRelayUsage-1.0.0-win-x64\CodexRelayUsage.exe"
-Get-FileHash ".\artifacts\CodexRelayUsage-1.0.0-win-x64.zip" -Algorithm SHA256
+.\scripts\Verify.ps1 -ExecutablePath ".\artifacts\CodexRelayUsage-1.0.1-win-x64\CodexRelayUsage.exe"
+Get-FileHash ".\artifacts\CodexRelayUsage-1.0.1-win-x64.zip" -Algorithm SHA256
 ```
 
 Verify 使用合成日志及 Windows 原生窗体探针，需要可创建 WinForms 窗口的 Windows 桌面，不依赖 Codex 登录或真实会话。结果为 self-test.json、native-result.json、verification.json。交付检查与待实际操作的验收场景见 `ACCEPTANCE.zh-CN.md`。

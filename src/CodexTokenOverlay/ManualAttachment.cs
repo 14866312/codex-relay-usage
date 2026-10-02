@@ -42,7 +42,7 @@ internal static class ManualAttachmentRules
     public const double MaximumAbsoluteOffsetDip = 4096d;
 
     public static readonly WindowAttachment DefaultMainAttachment =
-        new(AttachmentReferencePoint.BottomCenter, 0d, -24d);
+        new(AttachmentReferencePoint.TopRight, -355d, 20d);
 
     public static int SanitizeScale(int? value) =>
         Math.Clamp(value ?? DefaultScalePercent, MinimumScalePercent, MaximumScalePercent);
@@ -285,7 +285,8 @@ internal sealed class ManualAttachmentCoordinator
 
     public ManualAttachmentTransition BeginEdit(
         ManualPlacementSnapshot original,
-        AttachmentTargetBounds targets)
+        AttachmentTargetBounds targets,
+        OverlayLayoutResult? currentLayout = null)
     {
         ArgumentNullException.ThrowIfNull(original);
         ArgumentNullException.ThrowIfNull(targets);
@@ -293,6 +294,20 @@ internal sealed class ManualAttachmentCoordinator
         _editState.Begin(SanitizeSnapshot(original));
         _editState.ApplyEnabled(true);
         var target = ResolveMainTarget(targets);
+        if (!original.Enabled && target is not null && targets.Dpi != 0
+            && currentLayout is { State: not OverlayVisualState.HiddenForSpace }
+            && !currentLayout.CapsuleBounds.IsEmpty)
+        {
+            // Begin editing at the visible automatic position, without jumping
+            // to the dormant manual attachment or changing the rendered size.
+            var capsule = currentLayout.CapsuleBounds;
+            var center = new Point(
+                currentLayout.WindowBounds.Left + capsule.Left + capsule.Width / 2,
+                currentLayout.WindowBounds.Top + capsule.Top + capsule.Height / 2);
+            _editState.ApplyAttachment(ManualAttachmentCalculator.Capture(
+                target.Bounds, center, targets.Dpi));
+            _editState.ApplyScale(currentLayout.ScalePercent);
+        }
         _canSave = target is not null;
         return Transition(
             _editState.Draft,

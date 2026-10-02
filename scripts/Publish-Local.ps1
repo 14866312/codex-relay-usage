@@ -10,7 +10,9 @@ $projectPath = Join-Path $repositoryRoot "src/CodexTokenOverlay/CodexTokenOverla
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $repositoryRoot "artifacts" }
 $outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
-$binaryName = "CodexRelayUsage-1.0.0-win-x64"
+[xml]$project = Get-Content -LiteralPath $projectPath -Raw
+$version = [string]$project.Project.PropertyGroup.Version
+$binaryName = "CodexRelayUsage-$version-win-x64"
 $binaryDirectory = Join-Path $outputRoot $binaryName
 New-Item -ItemType Directory -Path $binaryDirectory -Force | Out-Null
 
@@ -21,7 +23,7 @@ try {
 } finally { Pop-Location }
 & (Join-Path $PSScriptRoot "Verify.ps1") -ExecutablePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -OutputDirectory (Join-Path $binaryDirectory "verification")
 
-foreach ($name in @("README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-CN.md")) {
+foreach ($name in @("README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-CN.md", "CHANGELOG.md")) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $name) -Destination $binaryDirectory -Force
 }
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party") -Destination $binaryDirectory -Recurse -Force
@@ -36,13 +38,13 @@ Compress-Archive -LiteralPath $binaryDirectory -DestinationPath $binaryArchive -
 
 # Allow-list source entries: never package bin/obj, the SDK, settings, or real conversation logs.
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-$sourceName = "CodexRelayUsage-1.0.0-source"
+$sourceName = "CodexRelayUsage-$version-source"
 $sourceArchive = Join-Path $outputRoot ($sourceName + ".zip")
 $stream = [System.IO.File]::Open($sourceArchive, [System.IO.FileMode]::Create)
 $zip = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Create)
 try {
     $sourceFiles = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
-    foreach ($name in @(".gitignore", "global.json", "README.md", "README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-CN.md")) {
+    foreach ($name in @(".gitignore", "global.json", "README.md", "README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-CN.md", "CHANGELOG.md")) {
         $sourceFiles.Add((Get-Item -LiteralPath (Join-Path $repositoryRoot $name) -Force))
     }
     foreach ($folder in @("src", "scripts", "tests", "third_party", "previews")) {

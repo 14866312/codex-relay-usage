@@ -1,1 +1,111 @@
-{"Cases": [{"Name": "native-noactivate-edit-region", "CollapsedLayout": {"State": 0, "CollapsedDisplay": 0, "ExpansionDirection": 1, "Dpi": 144, "ScalePercent": 100, "WindowBounds": {"X": 400, "Y": 820, "Width": 675, "Height": 45}, "CapsuleBounds": {"X": 0, "Y": 0, "Width": 675, "Height": 45}, "PanelBounds": {"X": 0, "Y": 0, "Width": 0, "Height": 0}, "ExpandedRowHeight": 0}, "Collapsed60Layout": {"State": 0, "CollapsedDisplay": 0, "ExpansionDirection": 1, "Dpi": 144, "ScalePercent": 60, "WindowBounds": {"X": 400, "Y": 820, "Width": 405, "Height": 27}, "CapsuleBounds": {"X": 0, "Y": 0, "Width": 405, "Height": 27}, "PanelBounds": {"X": 0, "Y": 0, "Width": 0, "Height": 0}, "ExpandedRowHeight": 0}, "Collapsed130Layout": {"State": 0, "CollapsedDisplay": 0, "ExpansionDirection": 1, "Dpi": 144, "ScalePercent": 130, "WindowBounds": {"X": 400, "Y": 820, "Width": 878, "Height": 58}, "CapsuleBounds": {"X": 0, "Y": 0, "Width": 878, "Height": 58}, "PanelBounds": {"X": 0, "Y": 0, "Width": 0, "Height": 0}, "ExpandedRowHeight": 0}, "ExpandedLayout": {"State": 1, "CollapsedDisplay": 0, "ExpansionDirection": 1, "Dpi": 144, "ScalePercent": 100, "WindowBounds": {"X": 400, "Y": 349, "Width": 675, "Height": 516}, "CapsuleBounds": {"X": 0, "Y": 471, "Width": 675, "Height": 45}, "PanelBounds": {"X": 0, "Y": 0, "Width": 675, "Height": 462}, "ExpandedRowHeight": 48}}]}
+{
+  "Cases": [
+    {
+      "Name": "native-noactivate-top-down-edit-region",
+      "CollapsedLayout": {
+        "State": 0,
+        "CollapsedDisplay": 0,
+        "ExpansionDirection": 0,
+        "Dpi": 144,
+        "ScalePercent": 100,
+        "WindowBounds": {
+          "X": 400,
+          "Y": 240,
+          "Width": 675,
+          "Height": 45
+        },
+        "CapsuleBounds": {
+          "X": 0,
+          "Y": 0,
+          "Width": 675,
+          "Height": 45
+        },
+        "PanelBounds": {
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0
+        },
+        "ExpandedRowHeight": 0
+      },
+      "Collapsed60Layout": {
+        "State": 0,
+        "CollapsedDisplay": 0,
+        "ExpansionDirection": 0,
+        "Dpi": 144,
+        "ScalePercent": 60,
+        "WindowBounds": {
+          "X": 400,
+          "Y": 240,
+          "Width": 405,
+          "Height": 27
+        },
+        "CapsuleBounds": {
+          "X": 0,
+          "Y": 0,
+          "Width": 405,
+          "Height": 27
+        },
+        "PanelBounds": {
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0
+        },
+        "ExpandedRowHeight": 0
+      },
+      "Collapsed130Layout": {
+        "State": 0,
+        "CollapsedDisplay": 0,
+        "ExpansionDirection": 0,
+        "Dpi": 144,
+        "ScalePercent": 130,
+        "WindowBounds": {
+          "X": 400,
+          "Y": 240,
+          "Width": 878,
+          "Height": 58
+        },
+        "CapsuleBounds": {
+          "X": 0,
+          "Y": 0,
+          "Width": 878,
+          "Height": 58
+        },
+        "PanelBounds": {
+          "X": 0,
+          "Y": 0,
+          "Width": 0,
+          "Height": 0
+        },
+        "ExpandedRowHeight": 0
+      },
+      "ExpandedLayout": {
+        "State": 1,
+        "CollapsedDisplay": 0,
+        "ExpansionDirection": 0,
+        "Dpi": 144,
+        "ScalePercent": 100,
+        "WindowBounds": {
+          "X": 400,
+          "Y": 240,
+          "Width": 675,
+          "Height": 516
+        },
+        "CapsuleBounds": {
+          "X": 0,
+          "Y": 0,
+          "Width": 675,
+          "Height": 45
+        },
+        "PanelBounds": {
+          "X": 0,
+          "Y": 54,
+          "Width": 675,
+          "Height": 462
+        },
+        "ExpandedRowHeight": 48
+      }
+    }
+  ]
+}
