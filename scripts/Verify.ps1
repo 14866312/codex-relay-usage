@@ -38,6 +38,10 @@ $selfTestPath = Join-Path $outputRoot "self-test.json"
 Invoke-Probe -Arguments @("--self-test", $selfTestPath)
 $selfTest = Get-Content -LiteralPath $selfTestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($selfTest.Failed -ne 0) { throw "合成日志测试未全部通过，请查看 $selfTestPath" }
+$costUiPath = Join-Path $outputRoot "cost-ui.json"
+Invoke-Probe -Arguments @("--cost-ui-probe", $costUiPath)
+$costUi = Get-Content -LiteralPath $costUiPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($costUi.Failed -ne 0) { throw "费用窗口检查失败，请查看 $costUiPath" }
 
 $nativePath = Join-Path $outputRoot "native-result.json"
 $fixture = Join-Path $repositoryRoot "tests/fixtures/FormProbe.json"
@@ -76,9 +80,11 @@ $summary = [pscustomobject]@{
     SyntheticFailed = $selfTest.Failed
     NativePassed = $checks.Count - $failed
     NativeFailed = $failed
+    CostUiPassed = $costUi.Passed
+    CostUiFailed = $costUi.Failed
     PeArchitecture = "x64"
     Checks = $checks.ToArray()
 }
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outputRoot "verification.json") -Encoding UTF8
 if ($failed -gt 0) { throw "原生窗口测试失败，请查看 $outputRoot" }
-Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、x64 PE。"
+Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、$($costUi.Passed) 项费用窗口检查、x64 PE。"

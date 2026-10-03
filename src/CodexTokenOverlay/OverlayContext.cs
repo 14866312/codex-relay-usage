@@ -29,6 +29,11 @@ internal sealed class OverlayContext : ApplicationContext
     private readonly OverlayAnchorTargetState _anchorTargetState = new();
     private readonly ManualAttachmentCoordinator _manualAttachment = new();
     private readonly string? _settingsPath;
+    private readonly string? _pricingPath;
+    private PricingRevision _prices;
+    private readonly SessionCostCalculator _costCalculator = new();
+    private SessionCostResult? _cost;
+    private CostDetailsForm? _costDetails;
     private OverlayPresentation _presentation;
     private CodexWindowTarget? _currentTarget;
     private ManualPlacementSnapshot? _settingsSnapshotBeforeEdit;
@@ -51,6 +56,9 @@ internal sealed class OverlayContext : ApplicationContext
     {
         _settingsPath = settingsPath;
         _settings = OverlaySettings.Load(_settingsPath);
+        _pricingPath = settingsPath is null ? null : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(settingsPath))!, "prices.json");
+        var pricingLoad = PricingStore.Load(_pricingPath);
+        _prices = new(1, pricingLoad.Settings);
         try { _monitor = new TokenLogMonitor(useSavedRoot ? _settings.SessionRoot ?? sessionRoot : sessionRoot); }
         catch (ArgumentException) { _monitor = new TokenLogMonitor(sessionRoot); }
         _routeMonitor = new CodexVisibleThreadMonitor(_monitor.SessionRoot);
@@ -86,6 +94,13 @@ internal sealed class OverlayContext : ApplicationContext
         var directoryItem = new ToolStripMenuItem("选择 Codex 日志目录…");
         directoryItem.Click += (_, _) => SelectLogDirectory();
         menu.Items.Add(directoryItem);
+        menu.Items.Add(new ToolStripSeparator());
+        var pricesItem = new ToolStripMenuItem("模型价格…");
+        pricesItem.Click += (_, _) => EditPrices();
+        menu.Items.Add(pricesItem);
+        var costsItem = new ToolStripMenuItem("费用明细…");
+        costsItem.Click += (_, _) => ShowCostDetails();
+        menu.Items.Add(costsItem);
         menu.Items.Add(new ToolStripSeparator());
 
         _adjustManualMenuItem = new ToolStripMenuItem("调整位置和大小…");
@@ -174,6 +189,8 @@ internal sealed class OverlayContext : ApplicationContext
             Visible = true,
             ContextMenuStrip = menu
         };
+        if (pricingLoad.Error is not null)
+            _trayIcon.ShowBalloonTip(6000, "价格配置读取失败", pricingLoad.Error, ToolTipIcon.Warning);
 
         _form.SetPresentation(_presentation);
         _form.CapsuleClicked += HandleCapsuleClicked;
@@ -378,6 +395,7 @@ internal sealed class OverlayContext : ApplicationContext
 
         var uiScheduler = TaskScheduler.FromCurrentSynchronizationContext();
         var request = _selection.Request();
+        var prices = _prices;
         var manualId = _manualThreadId;
         var root = _queuedRoot;
         var cancellation = _readCancellation = new CancellationTokenSource();
@@ -389,7 +407,8 @@ internal sealed class OverlayContext : ApplicationContext
                 _monitor.PreferredThreadId = request.ThreadId;
                 if (manualId is not null) _monitor.SelectManual(manualId);
                 var snapshot = _monitor.Poll(cancellationToken: cancellation.Token);
-                return (Snapshot: snapshot, Error: _monitor.LastError);
+                var cost = snapshot?.Ledger is { } ledger ? _costCalculator.Calculate(ledger, prices, cancellation.Token) : null;
+                return (Snapshot: snapshot, Error: _monitor.LastError, Cost: cost);
             })
             .ContinueWith(task =>
             {
@@ -400,11 +419,15 @@ internal sealed class OverlayContext : ApplicationContext
                         ObserveSelection();
                         if (task.Status == TaskStatus.RanToCompletion)
                         {
-                            _selection.TryPublish(request, task.Result.Snapshot, task.Result.Error);
+                            if (_selection.TryPublish(request, task.Result.Snapshot, task.Result.Error))
+                                _cost = CostPublication.Matches(request, _selection.Revision, _lastSnapshot, _prices.Version, task.Result.Cost)
+                                    ? task.Result.Cost : null;
                             if (_queuedRoot == root) _queuedRoot = null;
                         }
                         else if (task.IsFaulted && task.Exception!.GetBaseException() is not OperationCanceledException)
-                            _selection.TryPublish(request, null, "读取暂时失败，正在重试");
+                        {
+                            if (_selection.TryPublish(request, null, "读取暂时失败，正在重试")) _cost = null;
+                        }
                         RefreshPresentation(); UpdateSessionMenuText(); RefreshTrayText();
                     }
                 }
@@ -415,7 +438,7 @@ internal sealed class OverlayContext : ApplicationContext
                     Interlocked.Exchange(ref _pollInFlight, 0);
                 }
                 // Coalesce rapid switches to the latest selection as soon as the cancelled read exits.
-                if (request.Revision != _selection.Revision && Volatile.Read(ref _disposed) == 0) RequestBackgroundPoll();
+                if ((request.Revision != _selection.Revision || prices.Version != _prices.Version) && Volatile.Read(ref _disposed) == 0) RequestBackgroundPoll();
             }, CancellationToken.None, TaskContinuationOptions.None, uiScheduler);
     }
 
@@ -423,6 +446,8 @@ internal sealed class OverlayContext : ApplicationContext
     {
         _pendingRouteStatus = _routeMonitor.GetStatus();
         if (!_selection.Observe(_pendingRouteStatus, _manualThreadId, _selectionRevision)) return false;
+        _cost = null;
+        _costDetails?.SetResult(_pendingThreadId, null);
         _readCancellation?.Cancel();
         _interaction.CollapseForHostChange(); StopOutsideClickPolling();
         return true;
@@ -441,9 +466,48 @@ internal sealed class OverlayContext : ApplicationContext
         var waiting = _pendingThreadId is null ? following : $"等待会话 {OverlayPresentationBuilder.ShortThreadId(_pendingThreadId)} 的用量";
         _presentation = _lastSnapshot is null
             ? OverlayPresentationBuilder.CreateWaiting(waiting, _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField, _settings.VisibleFields)
-            : OverlayPresentationBuilder.Create(_lastSnapshot, _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField, _settings.VisibleFields);
+            : OverlayPresentationBuilder.Create(_lastSnapshot, _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField, _settings.VisibleFields, _cost);
         _presentation = _presentation with { FollowText = following + (_pendingError is not null && _pendingThreadId is not null ? " · " + _pendingError : "") };
         _form.SetPresentation(_presentation);
+        _costDetails?.SetResult(_pendingThreadId, _cost);
+    }
+
+    private void EditPrices()
+    {
+        CollapseAndHide();
+        var models = _lastSnapshot?.Ledger?.Calls.Select(c => c.Model).OfType<string>().ToArray() ?? Array.Empty<string>();
+        if (_lastSnapshot?.Model is { } model) models = models.Append(model).ToArray();
+        using var editor = new ModelPriceForm(_prices.Settings, models, _pricingPath);
+        if (editor.ShowDialog() == DialogResult.OK && editor.SavedSettings is { } saved)
+        {
+            var firstSetup = _prices.Settings.Profiles.Count == 0 && saved.Profiles.Count > 0;
+            _prices = new(_prices.Version + 1, saved);
+            _cost = null;
+            _readCancellation?.Cancel();
+            if (firstSetup)
+            {
+                _settings.VisibleFields |= DisplayField.Cost;
+                _settings.Save(_settingsPath);
+                UpdateFieldChecks();
+            }
+            RefreshPresentation(); RequestBackgroundPoll();
+        }
+        if (_currentTarget is not null) SetForegroundWindow(_currentTarget.HostWindow.Handle);
+        Tick();
+    }
+
+    private void ShowCostDetails()
+    {
+        CollapseAndHide();
+        if (_costDetails is null || _costDetails.IsDisposed)
+        {
+            _costDetails = new CostDetailsForm();
+            _costDetails.FormClosed += (_, _) => _costDetails = null;
+        }
+        _costDetails.SetResult(_pendingThreadId, _cost);
+        _costDetails.Show();
+        if (_costDetails.WindowState == FormWindowState.Minimized) _costDetails.WindowState = FormWindowState.Normal;
+        _costDetails.Activate();
     }
 
     private async Task SelectSessionAsync()
@@ -984,6 +1048,7 @@ internal sealed class OverlayContext : ApplicationContext
 
     private void DisposeThemeAndForms()
     {
+        _costDetails?.Dispose();
         _themeBinding.Dispose();
         _targetHighlight.Dispose();
         _form.Dispose();

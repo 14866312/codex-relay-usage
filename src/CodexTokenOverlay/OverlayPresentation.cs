@@ -7,7 +7,7 @@ internal sealed record OverlayPresentation(
     OverlayMetric Primary, OverlayMetric Secondary, IReadOnlyList<OverlayMetric> ExpandedRows,
     double ContextPercent, bool ShowContextProgress, string? StatusText,
     OverlayMetric? Total = null, string? ExtraText = null, string? ModelText = null,
-    string? SourceText = null, string? FollowText = null, string? IssueText = null);
+    string? SourceText = null, string? FollowText = null, string? IssueText = null, string? EstimateText = null);
 
 internal static class OverlayPresentationBuilder
 {
@@ -16,24 +16,33 @@ internal static class OverlayPresentationBuilder
         new(WaitingMetric(primaryField), WaitingMetric(secondaryField), Rows(visibleFields, WaitingMetric), 0, false,
             Clean(statusText), WaitingMetric(DisplayField.Total), SourceText: "Codex 本地日志 · 未提供用量");
 
-    public static OverlayPresentation Create(TokenSnapshot snapshot, DisplayField primaryField, DisplayField secondaryField, DisplayField visibleFields)
+    public static OverlayPresentation Create(TokenSnapshot snapshot, DisplayField primaryField, DisplayField secondaryField, DisplayField visibleFields, SessionCostResult? cost = null)
     {
         var context = snapshot.ContextPercent;
         var rounds = snapshot.TurnCount.HasValue ? snapshot.TurnCount + " 轮" : "— 轮";
         var time = snapshot.UpdatedAtUtc == default ? "未提供时间" : snapshot.UpdatedAtUtc.ToLocalTime().ToString("HH:mm:ss");
-        return new(Metric(snapshot, primaryField, true), Metric(snapshot, secondaryField, true),
-            Rows(visibleFields, field => Metric(snapshot, field, false)), context ?? 0,
+        var rows = Rows(visibleFields, field => Metric(snapshot, field, false, cost)).ToList();
+        if (cost is not null && visibleFields.HasFlag(DisplayField.Cost))
+        {
+            foreach (var item in new[] { ("普通输入费用", cost.Amounts?.Input), ("缓存读取费用", cost.Amounts?.CacheRead),
+                ("缓存写入费用", cost.Amounts?.CacheWrite), ("输出费用", cost.Amounts?.Output) })
+                rows.Add(new(DisplayField.Cost, item.Item1, item.Item1, item.Item2.HasValue ? CostFormatting.Money(item.Item2.Value) : "— / 未计价", item.Item2.HasValue));
+        }
+        return new(Metric(snapshot, primaryField, true, cost), Metric(snapshot, secondaryField, true, cost),
+            rows, context ?? 0,
             (visibleFields & DisplayField.ContextPercent) != 0 && context.HasValue,
-            snapshot.UsageRecorded ? null : "等待当前会话用量", Metric(snapshot, DisplayField.Total, false),
+            snapshot.UsageRecorded || snapshot.Ledger?.Calls.Count > 0 ? null : "等待当前会话用量", Metric(snapshot, DisplayField.Total, false),
             rounds + " · 上下文 " + Percent(context), "模型：" + Clean(snapshot.Model ?? "未提供"),
             "Codex 本地日志 · " + ShortThreadId(snapshot.ThreadId) + " · " + time,
-            IssueText: snapshot.Issue);
+            IssueText: snapshot.Issue,
+            EstimateText: cost is null ? null : "按当前配置估算（USD） · 已计价 " + cost.PricedCalls + "/" + cost.RecordedCalls + " 次"
+                + (cost.Status == SessionCostStatus.Partial ? " · 部分记录" : ""));
     }
     private static IReadOnlyList<OverlayMetric> Rows(DisplayField fields, Func<DisplayField, OverlayMetric> metric) =>
         DisplayFieldRules.Ordered.Where(f => f != DisplayField.Total && (fields & f) != 0).Select(metric).ToArray();
     private static OverlayMetric WaitingMetric(DisplayField field)
     { var labels = Labels(field); return new(field, labels.Compact, labels.Full, "— / 未提供", false); }
-    private static OverlayMetric Metric(TokenSnapshot s, DisplayField field, bool compact)
+    private static OverlayMetric Metric(TokenSnapshot s, DisplayField field, bool compact, SessionCostResult? cost = null)
     {
         var labels = Labels(field);
         string Number(long? number, bool valid = true) => number.HasValue && (!TokenSnapshot.Valid(number) || !valid)
@@ -51,9 +60,10 @@ internal static class OverlayPresentationBuilder
             DisplayField.Context => Number(s.ContextUsedTokens) + " / " + Number(s.ContextWindowTokens),
             DisplayField.ContextPercent => Percent(s.ContextPercent),
             DisplayField.Thread => ShortThreadId(s.ThreadId),
+            DisplayField.Cost => CostFormatting.Summary(cost, compact),
             _ => "—"
         };
-        return new(field, labels.Compact, labels.Full, value, !value.Contains('—') && value != "异常");
+        return new(field, labels.Compact, labels.Full, value, field == DisplayField.Cost ? cost?.Amounts is not null : !value.Contains('—') && value != "异常");
     }
     public static string Percent(double? percent) => percent.HasValue ? percent.Value.ToString("0", Invariant) + "%" : "—";
     public static string FormatTokenCount(long? value) => value switch
@@ -63,7 +73,8 @@ internal static class OverlayPresentationBuilder
         >= 1_000 => (value.Value / 1_000d).ToString("0.#", Invariant) + "k",
         _ => value.Value.ToString("N0", Invariant)
     };
-    public static string CompactText(OverlayMetric m) => m.Field == DisplayField.Total ? m.Value + " tok" : m.CompactLabel + " " + m.Value;
+    public static string CompactText(OverlayMetric m) => m.Field == DisplayField.Total ? m.Value + " tok" :
+        m.Field == DisplayField.Cost ? m.Value : m.CompactLabel + " " + m.Value;
     public static string ShortThreadId(string id, int maximumLength = 12)
     {
         id = Clean(id); if (id.Length <= maximumLength) return id;
@@ -80,6 +91,7 @@ internal static class OverlayPresentationBuilder
         DisplayField.Context => ("上下文", "最近调用 / 窗口"),
         DisplayField.ContextPercent => ("上下文", "上下文占用（最近调用估算）"),
         DisplayField.Reasoning => ("推理", "推理输出（已含在输出）"), DisplayField.Thread => ("会话", "会话"),
+        DisplayField.Cost => ("费用", "会话费用估算"),
         _ => throw new ArgumentOutOfRangeException(nameof(f))
     };
     private static string Clean(string text) => new(text.Where(c => !char.IsControl(c)).ToArray());

@@ -30,6 +30,8 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party") -Destination $b
 $previewDirectory = Join-Path $repositoryRoot "previews"
 $previewProcess = Start-Process -FilePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -ArgumentList @("--render-preview", ('"' + $previewDirectory + '"')) -WindowStyle Hidden -PassThru -Wait
 if ($previewProcess.ExitCode -ne 0) { throw "生成预览失败。" }
+$costUiProcess = Start-Process -FilePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -ArgumentList @("--cost-ui-probe", ('"' + (Join-Path $binaryDirectory "verification/cost-ui-previews.json") + '"'), ('"' + $previewDirectory + '"')) -WindowStyle Hidden -PassThru -Wait
+if ($costUiProcess.ExitCode -ne 0) { throw "生成费用窗口预览失败。" }
 Copy-Item -LiteralPath $previewDirectory -Destination $binaryDirectory -Recurse -Force
 $exeHash = (Get-FileHash -LiteralPath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
 [System.IO.File]::WriteAllText((Join-Path $binaryDirectory "SHA256SUMS.txt"), "$exeHash  CodexRelayUsage.exe" + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
@@ -51,6 +53,7 @@ try {
         foreach ($file in (Get-ChildItem -LiteralPath (Join-Path $repositoryRoot $folder) -Recurse -File)) {
             $relative = $file.FullName.Substring($repositoryRoot.Length + 1).Replace([char]92, [char]47)
             if ($relative -match '(^|/)(bin|obj)(/|$)') { continue }
+            if ($file.Name -match '^(prices|settings)\.json($|\.)' -or $file.Extension -eq '.jsonl') { continue }
             $sourceFiles.Add($file)
         }
     }

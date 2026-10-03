@@ -782,7 +782,7 @@ internal sealed class TokenStripForm : Form
         using var footerFont = new Font("Microsoft YaHei UI", (float)(metrics.LabelFontPoints * 0.84), FontStyle.Regular, GraphicsUnit.Point);
         var footerHeight = Math.Max(1, (content.Bottom - footerTop) / 4);
         var lines = new[] { _presentation.ModelText ?? "模型：未提供", _presentation.SourceText ?? "Codex 本地日志",
-            _presentation.FollowText ?? "等待识别", _presentation.IssueText is null ? "缓存零值按日志显示 · 非账单" : "⚠ " + _presentation.IssueText };
+            _presentation.FollowText ?? "等待识别", _presentation.IssueText is null ? _presentation.EstimateText ?? "缓存零值按日志显示 · 非账单" : "⚠ " + _presentation.IssueText };
         for (var i = 0; i < lines.Length; i++)
             TextRenderer.DrawText(graphics, lines[i], footerFont, new Rectangle(content.X, footerTop + footerHeight * i, content.Width, footerHeight),
                 i == 3 && _presentation.IssueText is not null ? Color.OrangeRed : _palette.Label, TextFlags);

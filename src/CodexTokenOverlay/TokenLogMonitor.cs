@@ -195,6 +195,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
     private DateTime _writeUtc, _creationUtc, _updatedUtc;
     private long? _total, _input, _cache, _output, _reasoning, _contextUsed, _contextWindow;
     private string? _model, _parseIssue;
+    private SessionUsageLedger _ledger = new(threadId);
     public string Path { get; } = path;
     public TokenSnapshot? Snapshot { get; private set; }
     internal long TotalBytesRead { get; private set; }
@@ -232,7 +233,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
         }
         info.Refresh(); _writeUtc = info.LastWriteTimeUtc; _creationUtc = info.CreationTimeUtc; _knownLength = stream.Length;
         Snapshot = new TokenSnapshot(threadId, Path, _total, _input, _cache, _output, _reasoning,
-            _contextUsed, _contextWindow, _updatedUtc, _model, _turns.Count, _parseIssue, _usageRecorded, _totalTokenInvalid);
+            _contextUsed, _contextWindow, _updatedUtc, _model, _turns.Count, _parseIssue, _usageRecorded, _totalTokenInvalid, _ledger.Snapshot());
         return Snapshot;
     }
     private void Append(ReadOnlySpan<byte> bytes)
@@ -246,6 +247,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
         _offset = _knownLength = 0; _partial.SetLength(0); _turns.Clear(); _skipLine = false; _usageRecorded = false; _totalTokenInvalid = false;
         _total = _input = _cache = _output = _reasoning = _contextUsed = _contextWindow = null;
         _model = _parseIssue = null; _updatedUtc = default; Snapshot = null;
+        _ledger = new(threadId);
     }
     private void Process(byte[] bytes)
     {
@@ -256,7 +258,8 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
             var root = doc.RootElement;
             if (!root.TryGetProperty("payload", out var payload) || payload.ValueKind != JsonValueKind.Object) return;
             var type = String(root, "type");
-            if (type == "turn_context") { _model = String(payload, "model") ?? _model; return; }
+            if (type == "turn_context") { _ledger.ObserveContext(payload); _model = String(payload, "model") ?? _model; return; }
+            if (type == "token_usage_record") { _ledger.ObserveRecord(payload); return; }
             if (type != "event_msg") return;
             var eventType = String(payload, "type");
             if (eventType == "task_started") { var turn = String(payload, "turn_id"); if (turn is not null) _turns.Add(turn); return; }
@@ -264,6 +267,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
             var issues = new List<string>();
             if (usage.TryGetProperty("total_token_usage", out var total) && total.ValueKind == JsonValueKind.Object)
             {
+                _ledger.ObserveLegacy(total);
                 _input = Number(total, "input_tokens", issues); _cache = Number(total, "cached_input_tokens", issues);
                 _output = Number(total, "output_tokens", issues); _reasoning = Number(total, "reasoning_output_tokens", issues);
                 _total = Number(total, "total_tokens", issues); _usageRecorded = true;

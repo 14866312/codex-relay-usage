@@ -3,3 +3,5 @@
 artifacts/
 .vs/
 *.user
+prices.json
+prices.json.*.tmp

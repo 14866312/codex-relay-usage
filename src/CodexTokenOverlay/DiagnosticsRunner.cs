@@ -10,6 +10,19 @@ internal static class DiagnosticsRunner
     public static bool TryRun(IReadOnlyList<string> args, string root)
     {
         if (args.Count < 2) return false;
+        if (args[0] == "--cost-log-probe" && args.Count > 2)
+        {
+            var result = CostLogProbe.Run(root, args[2]);
+            File.WriteAllText(args[1], JsonSerializer.Serialize(result, JsonOptions));
+            Environment.ExitCode = result.ReadSucceeded && result.FormulaMatches ? 0 : 1; return true;
+        }
+        if (args[0] == "--cost-ui-probe")
+        {
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); Application.EnableVisualStyles();
+            var result = CostUiTests.Run(args.Count > 2 ? args[2] : null);
+            File.WriteAllText(args[1], JsonSerializer.Serialize(result, JsonOptions));
+            Environment.ExitCode = result.Failed == 0 ? 0 : 1; return true;
+        }
         if (args[0] == "--self-test")
         {
             var result = SelfTest();
@@ -20,6 +33,7 @@ internal static class DiagnosticsRunner
         if (args[0] == "--render-preview")
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            Application.EnableVisualStyles();
             RenderPreviews(args[1]); return true;
         }
         return false;
@@ -31,10 +45,14 @@ internal static class DiagnosticsRunner
         Directory.CreateDirectory(directory);
         foreach (var theme in new[] { OverlayThemeKind.Light, OverlayThemeKind.Dark })
         foreach (var expanded in new[] { false, true })
+        foreach (var costs in new[] { false, true })
         {
             using var form = new TokenStripForm();
             var settings = OverlaySettings.CreateDefault();
-            var presentation = OverlayPresentationBuilder.Create(Example(), DisplayField.Total, DisplayField.CacheHitRate, settings.VisibleFields)
+            var example = costs ? Example() with { TotalTokens = 97_603, InputTokens = 97_125, CachedInputTokens = 3_610,
+                OutputTokens = 478, ReasoningOutputTokens = 100, Model = "relay/test" } : Example();
+            var presentation = OverlayPresentationBuilder.Create(example, DisplayField.Total, costs ? DisplayField.Cost : DisplayField.CacheHitRate,
+                settings.VisibleFields | (costs ? DisplayField.Cost : DisplayField.None), costs ? SessionCostTests.SampleResult() : null)
                 with { FollowText = "自动跟随" };
             form.SetPresentation(presentation); form.ApplyTheme(OverlayThemePalette.For(theme));
             var host = TitleBarPlacementTests.Host((uint)form.DeviceDpi);
@@ -45,7 +63,7 @@ internal static class DiagnosticsRunner
             form.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
             using var shaped = new Bitmap(bitmap.Width, bitmap.Height);
             using (var graphics = Graphics.FromImage(shaped)) { graphics.Clear(Color.Transparent); if (form.Region is not null) graphics.Clip = form.Region; graphics.DrawImageUnscaled(bitmap, 0, 0); }
-            shaped.Save(Path.Combine(directory, $"{theme.ToString().ToLowerInvariant()}-{(expanded ? "expanded" : "collapsed")}.png"), ImageFormat.Png);
+            shaped.Save(Path.Combine(directory, $"{theme.ToString().ToLowerInvariant()}-{(expanded ? "expanded" : "collapsed")}{(costs ? "-cost" : "")}.png"), ImageFormat.Png);
         }
     }
     private static CodexWindowInfo Host(uint dpi) => new(new IntPtr(123), new(0, 0, 1400, 1000), new(0, 0, 1400, 1000),
@@ -168,6 +186,7 @@ internal static class DiagnosticsRunner
             Check("corrupt settings recover", OverlaySettings.ParseJson("bad-json").Settings.CollapsedPrimaryField == DisplayField.Total);
             TitleBarPlacementTests.Run(Check, directory);
             ConversationSwitchTests.Run(Check, directory);
+            SessionCostTests.Run(Check, directory);
             foreach (var dpi in new uint[] { 96, 120, 144, 192 })
             foreach (var scale in new[] { 60, 100, 130 })
             {
