@@ -21,7 +21,7 @@ internal sealed record OverlayThemePalette(
     Color TargetHighlight)
 {
     private static readonly OverlayThemePalette DarkPalette = new(
-        Color.FromArgb(36, 38, 45),
+        Color.FromArgb(33, 34, 37),
         Color.FromArgb(157, 161, 170),
         Color.FromArgb(245, 245, 247),
         Color.FromArgb(185, 174, 255),
@@ -33,7 +33,7 @@ internal sealed record OverlayThemePalette(
         Color.FromArgb(142, 126, 255));
 
     private static readonly OverlayThemePalette LightPalette = new(
-        Color.FromArgb(244, 244, 246),
+        Color.FromArgb(250, 251, 252),
         Color.FromArgb(92, 96, 105),
         Color.FromArgb(28, 29, 33),
         Color.FromArgb(91, 72, 190),
@@ -46,6 +46,27 @@ internal sealed record OverlayThemePalette(
 
     public static OverlayThemePalette For(OverlayThemeKind kind) =>
         kind == OverlayThemeKind.Light ? LightPalette : DarkPalette;
+
+    // A toolbar surface is quieter than the separate details card.
+    public Color ToolbarSurface => IsLight ? Color.FromArgb(238, 244, 249) : Color.FromArgb(32, 33, 36);
+    public Color ToolbarHover => IsLight ? Color.FromArgb(225, 233, 241) : Color.FromArgb(49, 50, 54);
+    public Color ToolbarPressed => IsLight ? Color.FromArgb(208, 219, 231) : Color.FromArgb(61, 63, 68);
+    public Color ToolbarOpen => IsLight ? Color.FromArgb(229, 237, 245) : Color.FromArgb(44, 46, 51);
+    public Color ToolbarBorder => Color.FromArgb(IsLight ? 14 : 22, IsLight ? Color.Black : Color.White);
+    public Color ToolbarActiveBorder => Color.FromArgb(IsLight ? 42 : 58, IsLight ? Color.Black : Color.White);
+    private bool IsLight => Background.GetBrightness() > .5f;
+
+    public Color ToolbarFill(OverlayFeedbackFrame frame) =>
+        Blend(Blend(Blend(ToolbarSurface, ToolbarOpen, frame.Open), ToolbarHover, frame.Hover), ToolbarPressed, frame.Press);
+
+    public Color ToolbarStroke(OverlayFeedbackFrame frame) =>
+        Blend(ToolbarBorder, ToolbarActiveBorder, Math.Max(frame.Open * .7, Math.Max(frame.Hover, frame.Press)));
+
+    private static Color Blend(Color from, Color to, double amount)
+    {
+        int Mix(int a, int b) => (int)Math.Round(a + (b - a) * Math.Clamp(amount, 0, 1));
+        return Color.FromArgb(Mix(from.A, to.A), Mix(from.R, to.R), Mix(from.G, to.G), Mix(from.B, to.B));
+    }
 }
 
 internal interface IOverlayThemeSource : IDisposable

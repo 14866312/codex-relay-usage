@@ -53,7 +53,7 @@ internal readonly record struct OverlayRenderMetrics(
             ScaleFont(11d),
             ScaleFont(13d),
             ScaleFont(15d),
-            Scale(10),
+            Scale(8),
             Scale(14),
             Scale(10),
             Scale(8),
@@ -82,7 +82,6 @@ internal sealed class TokenStripForm : Form
 {
     private const int WsExToolWindow = 0x00000080;
     private const int WsExNoActivate = 0x08000000;
-    private const int CsDropShadow = 0x00020000;
     private const int WmMouseActivate = 0x0021;
     private const int WmNcHitTest = 0x0084;
     private const int MaNoActivate = 3;
@@ -101,17 +100,28 @@ internal sealed class TokenStripForm : Form
     private Point _fixedTopLeft;
     private int _gestureStartScalePercent = ManualAttachmentRules.DefaultScalePercent;
     private OverlayEditPreviewEventArgs? _lastEditPreview;
+    private readonly OverlayFeedback _feedback = new();
+    private readonly System.Windows.Forms.Timer _animationTimer = new() { Interval = 15 };
+    private readonly bool? _motionEnabled;
+    private OverlayLayoutResult? _regionLayout;
+    private double _regionReveal = -1;
+    private bool _feedbackDisposed;
 
-    public TokenStripForm()
+    public TokenStripForm(bool? motionEnabled = null)
     {
+        _motionEnabled = motionEnabled;
+        _animationTimer.Tick += (_, _) => RefreshFeedback();
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
+        AccessibleName = "会话用量与费用";
+        AccessibleRole = AccessibleRole.PushButton;
+        AccessibleDescription = "点击展开或收起当前会话的用量与费用明细";
         AutoScaleMode = AutoScaleMode.None;
         BackColor = _palette.Background;
         ForeColor = _palette.Value;
-        Opacity = 0.97;
+        Opacity = 1;
         DoubleBuffered = true;
 
         _presentation = OverlayPresentationBuilder.CreateWaiting(
@@ -140,6 +150,9 @@ internal sealed class TokenStripForm : Form
     public bool IsEditMode { get; private set; }
     internal OverlayPresentation CurrentPresentation => _presentation;
     internal OverlayThemePalette CurrentThemePalette => _palette;
+    internal OverlayFeedbackFrame FeedbackFrame => _feedback.Frame;
+    internal bool IsPointerPressed => _feedback.PointerDown;
+    internal bool IsFeedbackTimerRunning => _animationTimer.Enabled;
 
     internal int SetBoundsCoreCallCount { get; private set; }
     internal bool IsEditGestureActive => _editGesture is not null;
@@ -221,7 +234,6 @@ internal sealed class TokenStripForm : Form
             {
                 parameters.ExStyle |= WsExNoActivate;
             }
-            parameters.ClassStyle |= CsDropShadow;
             return parameters;
         }
     }
@@ -250,6 +262,7 @@ internal sealed class TokenStripForm : Form
     public void ApplyLayout(OverlayLayoutResult layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
+        if (CurrentLayout == layout && Bounds == layout.WindowBounds.ToRectangle()) return;
         CurrentLayout = layout;
         SetBounds(
             layout.WindowBounds.X,
@@ -258,6 +271,49 @@ internal sealed class TokenStripForm : Form
             layout.WindowBounds.Height,
             BoundsSpecified.All);
 
+        _feedback.SetExpanded(layout.State == OverlayVisualState.Expanded, Environment.TickCount64, CanAnimate);
+        RefreshFeedback();
+    }
+
+    private bool CanAnimate => Visible && !IsEditMode
+        && (_motionEnabled ?? (SystemInformation.IsMenuAnimationEnabled && !SystemInformation.HighContrast));
+
+    internal void FinishFeedbackAnimation()
+    {
+        _feedback.Finish();
+        RefreshFeedback();
+    }
+
+    private void RefreshFeedback()
+    {
+        if (_feedbackDisposed) return;
+        _feedback.Advance(Environment.TickCount64);
+        if (!CanAnimate) _feedback.Finish();
+        UpdateWindowRegion();
+        Invalidate();
+        if (_feedback.IsAnimating && CanAnimate) _animationTimer.Start();
+        else _animationTimer.Stop();
+    }
+
+    private Rectangle RevealedPanelBounds
+    {
+        get
+        {
+            if (CurrentLayout is null || CurrentLayout.PanelBounds.IsEmpty || _feedback.Frame.PanelReveal <= 0) return Rectangle.Empty;
+            var bounds = CurrentLayout.PanelBounds.ToRectangle();
+            var height = Math.Max(1, (int)Math.Ceiling(bounds.Height * _feedback.Frame.PanelReveal));
+            return CurrentLayout.ExpansionDirection == ExpansionDirection.Down
+                ? new(bounds.X, bounds.Y, bounds.Width, height)
+                : new(bounds.X, bounds.Bottom - height, bounds.Width, height);
+        }
+    }
+
+    private void UpdateWindowRegion()
+    {
+        var layout = CurrentLayout;
+        if (layout is null || (_regionLayout == layout && _regionReveal == _feedback.Frame.PanelReveal)) return;
+        _regionLayout = layout;
+        _regionReveal = _feedback.Frame.PanelReveal;
         var metrics = OverlayRenderMetrics.Create(layout.Dpi, layout.ScalePercent);
         using var combined = new GraphicsPath();
         if (!layout.CapsuleBounds.IsEmpty)
@@ -267,17 +323,16 @@ internal sealed class TokenStripForm : Form
                 metrics.CapsuleRadius);
             combined.AddPath(capsule, connect: false);
         }
-        if (!layout.PanelBounds.IsEmpty)
+        if (!RevealedPanelBounds.IsEmpty)
         {
             using var panel = CreateRoundedRectanglePath(
-                layout.PanelBounds.ToRectangle(),
+                RevealedPanelBounds,
                 metrics.PanelRadius);
             combined.AddPath(panel, connect: false);
         }
 
         Region?.Dispose();
         Region = new Region(combined);
-        Invalidate();
     }
 
     public void BeginEditMode(int scalePercent)
@@ -293,6 +348,7 @@ internal sealed class TokenStripForm : Form
         }
 
         _gestureStartScalePercent = ManualAttachmentRules.SanitizeScale(scalePercent);
+        CancelPointerFeedback();
         IsEditMode = true;
         if (IsHandleCreated)
         {
@@ -319,8 +375,11 @@ internal sealed class TokenStripForm : Form
         Invalidate();
     }
 
-    internal void SimulateCapsuleClick(Point screenPoint) =>
+    internal void SimulateCapsuleClick(Point screenPoint)
+    {
+        HandleMouseDown(MouseButtons.Left, PointToClient(screenPoint), screenPoint);
         HandleMouseUp(MouseButtons.Left, PointToClient(screenPoint), screenPoint);
+    }
 
     internal void SimulateEditDrag(Point startScreen, Point currentScreen)
     {
@@ -349,7 +408,11 @@ internal sealed class TokenStripForm : Form
     internal bool SimulateEditCommand(Keys keyData) => HandleEditCommand(keyData);
 
     public bool ContainsScreenPoint(Point screenPoint) =>
-        CurrentLayout?.ContainsScreenPoint(screenPoint) == true;
+        CurrentLayout is not null && Region?.IsVisible(PointToClient(screenPoint)) == true;
+
+    private bool IsCapsulePoint(Point clientPoint) => CurrentLayout is not null
+        && CurrentLayout.CapsuleBounds.Contains(clientPoint.X, clientPoint.Y)
+        && Region?.IsVisible(clientPoint) == true;
 
     protected override void SetBoundsCore(
         int x,
@@ -377,8 +440,7 @@ internal sealed class TokenStripForm : Form
                 unchecked((short)(packed & 0xffff)),
                 unchecked((short)((packed >> 16) & 0xffff)));
             var clientPoint = PointToClient(screenPoint);
-            if (!CurrentLayout.CapsuleBounds.Contains(clientPoint.X, clientPoint.Y)
-                && !CurrentLayout.PanelBounds.Contains(clientPoint.X, clientPoint.Y))
+            if (Region?.IsVisible(clientPoint) != true)
             {
                 message.Result = (IntPtr)HtTransparent;
                 return;
@@ -412,9 +474,40 @@ internal sealed class TokenStripForm : Form
             PointToScreen(eventArgs.Location));
     }
 
+    protected override void OnMouseLeave(EventArgs eventArgs)
+    {
+        base.OnMouseLeave(eventArgs);
+        if (!IsEditMode)
+        {
+            _feedback.Move(false, Environment.TickCount64, CanAnimate);
+            Cursor = Cursors.Default;
+            RefreshFeedback();
+        }
+    }
+
+    protected override void OnVisibleChanged(EventArgs eventArgs)
+    {
+        base.OnVisibleChanged(eventArgs);
+        if (!Visible && _feedback is not null) CancelPointerFeedback();
+    }
+
+    private void CancelPointerFeedback()
+    {
+        _feedback.CancelPointer();
+        _feedback.Finish();
+        if (!IsEditMode && Capture) Capture = false;
+        Cursor = Cursors.Default;
+        RefreshFeedback();
+    }
+
     protected override void OnMouseCaptureChanged(EventArgs eventArgs)
     {
         base.OnMouseCaptureChanged(eventArgs);
+        if (!Capture && !IsEditMode)
+        {
+            if (_feedback.PointerDown) CancelPointerFeedback();
+            return;
+        }
         if (Capture || _editGesture is null)
         {
             return;
@@ -442,8 +535,16 @@ internal sealed class TokenStripForm : Form
 
     private void HandleMouseDown(MouseButtons button, Point clientPoint, Point cursorScreen)
     {
-        if (!IsEditMode
-            || button != MouseButtons.Left
+        if (!IsEditMode)
+        {
+            if (button == MouseButtons.Left && _feedback.Down(IsCapsulePoint(clientPoint), Environment.TickCount64, CanAnimate))
+            {
+                Capture = true;
+                RefreshFeedback();
+            }
+            return;
+        }
+        if (button != MouseButtons.Left
             || CurrentLayout is null
             || !CurrentLayout.CapsuleBounds.Contains(clientPoint.X, clientPoint.Y))
         {
@@ -464,9 +565,17 @@ internal sealed class TokenStripForm : Form
 
     private void HandleMouseMove(Point clientPoint, Point cursorScreen)
     {
-        _ = clientPoint;
-        if (!IsEditMode || _editGesture is null)
+        if (!IsEditMode)
         {
+            var inside = IsCapsulePoint(clientPoint);
+            _feedback.Move(inside, Environment.TickCount64, CanAnimate);
+            Cursor = inside ? Cursors.Hand : Cursors.Default;
+            RefreshFeedback();
+            return;
+        }
+        if (_editGesture is null)
+        {
+            Cursor = EditResizeHandleBounds.Contains(clientPoint) ? Cursors.SizeNWSE : Cursors.SizeAll;
             return;
         }
 
@@ -520,8 +629,10 @@ internal sealed class TokenStripForm : Form
             return;
         }
 
-        if (CurrentLayout is not null
-            && CurrentLayout.CapsuleBounds.Contains(clientPoint.X, clientPoint.Y))
+        var clicked = _feedback.Up(IsCapsulePoint(clientPoint), Environment.TickCount64, CanAnimate);
+        if (Capture) Capture = false;
+        RefreshFeedback();
+        if (clicked)
         {
             CapsuleClicked?.Invoke(this, EventArgs.Empty);
         }
@@ -640,6 +751,10 @@ internal sealed class TokenStripForm : Form
     {
         if (disposing)
         {
+            _feedbackDisposed = true;
+            _animationTimer.Stop();
+            _animationTimer.Dispose();
+            _feedback.CancelPointer();
             CancelEditGesture();
             Region?.Dispose();
             Region = null;
@@ -660,11 +775,11 @@ internal sealed class TokenStripForm : Form
         var layout = CurrentLayout!;
         var bounds = layout.CapsuleBounds.ToRectangle();
         using var path = CreateRoundedRectanglePath(bounds, metrics.CapsuleRadius);
-        graphics.FillPath(backgroundBrush, path);
-        if (decorations.ShowBorder)
-        {
-            graphics.DrawPath(borderPen, path);
-        }
+        using var surfaceBrush = new SolidBrush(_palette.ToolbarFill(_feedback.Frame));
+        using var surfacePen = new Pen(_palette.ToolbarStroke(_feedback.Frame), metrics.StrokeWidth);
+        graphics.FillPath(surfaceBrush, path);
+        using var outline = CreateRoundedRectanglePath(Rectangle.Inflate(bounds, -metrics.StrokeWidth, -metrics.StrokeWidth), metrics.CapsuleRadius);
+        graphics.DrawPath(decorations.ShowBorder ? borderPen : surfacePen, outline);
 
         if (decorations.ShowDragHint)
         {
@@ -681,6 +796,11 @@ internal sealed class TokenStripForm : Form
 
         var padding = metrics.HorizontalPadding;
         var content = Rectangle.Inflate(bounds, -padding, 0);
+        content.Offset(0, (int)Math.Round(metrics.StrokeWidth * _feedback.Frame.Press));
+        var chevronSize = Math.Max(5, metrics.EditHandleSize);
+        var chevronBounds = new Rectangle(content.Right - chevronSize, content.Y, chevronSize, content.Height);
+        content.Width = Math.Max(0, content.Width - chevronSize - metrics.MetricGap);
+        DrawChevron(graphics, chevronBounds, metrics);
         if (!string.IsNullOrWhiteSpace(_presentation.StatusText))
         {
             TextRenderer.DrawText(
@@ -705,10 +825,22 @@ internal sealed class TokenStripForm : Form
         var extra = _presentation.ExtraText ?? "";
         var extraWidth = Math.Min(content.Width / 2, TextRenderer.MeasureText(graphics, extra, labelFont, Size.Empty, TextFormatFlags.NoPadding).Width + metrics.MetricGap);
         var pillBounds = new Rectangle(content.X + metrics.HeaderHeight, content.Y, content.Width - extraWidth - metrics.HeaderHeight, content.Height);
-        DrawDatabaseIcon(graphics, new Rectangle(content.X, content.Y + (content.Height - metrics.DividerHeight) / 2, metrics.DividerHeight, metrics.DividerHeight), dividerPen);
+        using var iconPen = new Pen(_palette.Label, metrics.StrokeWidth);
+        DrawDatabaseIcon(graphics, new Rectangle(content.X, content.Y + (content.Height - metrics.DividerHeight) / 2, metrics.DividerHeight, metrics.DividerHeight), iconPen);
         TextRenderer.DrawText(graphics, pillText, labelFont, pillBounds, _palette.Value, TextFlags);
         TextRenderer.DrawText(graphics, extra, labelFont, new Rectangle(content.Right - extraWidth, content.Y, extraWidth, content.Height), _palette.Label, TextFlags | TextFormatFlags.Right);
         DrawEditHandle(graphics, dividerPen, metrics, decorations);
+    }
+
+    private void DrawChevron(Graphics graphics, Rectangle bounds, OverlayRenderMetrics metrics)
+    {
+        var state = graphics.Save();
+        graphics.TranslateTransform(bounds.Left + bounds.Width / 2f, bounds.Top + bounds.Height / 2f);
+        graphics.RotateTransform((float)(_feedback.Frame.Open * 180));
+        var halfWidth = Math.Max(2f, bounds.Width * .29f);
+        using var pen = new Pen(_palette.Label, metrics.StrokeWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        graphics.DrawLines(pen, new[] { new PointF(-halfWidth, -halfWidth / 2), new PointF(0, halfWidth / 2), new PointF(halfWidth, -halfWidth / 2) });
+        graphics.Restore(state);
     }
 
     private void DrawEditHandle(
@@ -756,10 +888,8 @@ internal sealed class TokenStripForm : Form
         var bounds = layout.PanelBounds.ToRectangle();
         using var path = CreateRoundedRectanglePath(bounds, metrics.PanelRadius);
         graphics.FillPath(backgroundBrush, path);
-        if (decorations.ShowBorder)
-        {
-            graphics.DrawPath(borderPen, path);
-        }
+        using var outline = CreateRoundedRectanglePath(Rectangle.Inflate(bounds, -metrics.StrokeWidth, -metrics.StrokeWidth), metrics.PanelRadius);
+        graphics.DrawPath(borderPen, outline);
 
         var padding = metrics.PanelPadding;
         var content = Rectangle.Inflate(bounds, -padding, -padding);

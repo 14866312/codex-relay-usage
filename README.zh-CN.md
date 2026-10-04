@@ -1,8 +1,12 @@
-# Codex 会话用量悬浮工具 1.1.0
+# Codex 会话用量悬浮工具 1.1.1
 
 为使用 API 中转站模型的 Windows Codex Desktop 用户显示当前会话用量。来源始终为 **Codex 本地日志**，无需 API 密钥或 ChatGPT 登录。
 
 收起显示 `5M tok · 缓存命中 94%`，旁边显示已记录轮次与最近调用上下文占用。默认放在顶部“文件／编辑／视图／帮助”右侧的空白区，避开菜单和窗口控制按钮；点击向下展开明细。
+
+1.1.1 使用贴近 Codex 顶栏的背景、细边框和小圆角，去掉厚重系统阴影。鼠标悬停时约 130ms 平滑变色；按住鼠标立即加深，内容轻微下沉；松开后约 100ms 回弹。展开后保留高亮，箭头约 150ms 翻转，明细约 160ms 向下展开。按住后移到外面松开会取消点击，不会误展开。系统关闭菜单动画或使用高对比度时取消过渡动画，仍保留即时悬停、按下和展开反馈。
+
+![默认、悬停与按下状态](previews/light-toolbar-states.png)
 
 ![浅色费用展开示例](previews/light-expanded-cost.png)
 
@@ -10,7 +14,7 @@
 
 ## 启动与操作
 
-1. 先在托盘退出旧版，再解压 `CodexRelayUsage-1.1.0-win-x64.zip`，进入同名文件夹，双击 `CodexRelayUsage.exe`。成品自带运行时，不必安装 .NET SDK。同一时间只允许运行一个工具实例，旧版未退出时新版不会启动。
+1. 先在托盘退出旧版，再解压 `CodexRelayUsage-1.1.1-win-x64.zip`，进入同名文件夹，双击 `CodexRelayUsage.exe`。成品自带运行时，不必安装 .NET SDK。同一时间只允许运行一个工具实例，旧版未退出时新版不会启动。
 2. 打开 Codex 主窗口并选择一个对话。初始位置在顶部菜单右侧的空白区；最小化或切到其他应用时隐藏，回到 Codex 时恢复。
 3. 如需自定义位置，右击系统托盘“Codex 会话用量”图标，选择“调整位置和大小…”。拖动悬浮条，拖右下角缩放，按 Enter 或托盘“完成调整”保存，Esc 取消。保存相对窗口的位置，随后跟随窗口移动和缩放；可“重置到顶部菜单空白区”。自动定位保留左侧菜单及右侧最小化、最大化、关闭按钮区域；窗口变窄时先缩小完整悬浮条，再仅显示主指标，空间仍不足时隐藏。
 4. 点击 Token 区域向下展开，点击外部收起。正常点击不抢 Codex 输入焦点；位置编辑、会话选择器和托盘菜单属于主动操作。
@@ -75,7 +79,7 @@
 
 设置位于 `%LOCALAPPDATA%/CodexRelayUsage/settings.json`，记录位置、60%–130% 缩放、主题、字段、日志目录和锁定 ID。从 1.0.0 升级时首次将旧位置迁移到顶部，保留主题、字段、目录、锁定 ID 和缩放偏好；以后保存的手动位置会继续保留。
 
-价格独立保存在 `%LOCALAPPDATA%\CodexRelayUsage\prices.json`，使用独立配置版本和原子保存。保存失败时保留原文件并提示，界面不切换到未保存价格。1.1.0 保留已有的顶部位置、向下展开、主题、字段和缩放设置。指定 `--settings` 时，测试价格文件位于该设置文件同目录。
+价格独立保存在 `%LOCALAPPDATA%\CodexRelayUsage\prices.json`，使用独立配置版本和原子保存。保存失败时保留原文件并提示，界面不切换到未保存价格。1.1.1 保留已有的价格、顶部位置、向下展开、主题、字段和缩放设置。指定 `--settings` 时，测试价格文件位于该设置文件同目录。
 
 程序不读取 API 密钥配置、不改写会话日志、不调用中转接口、不开放 HTTP 服务；读取元数据和 usage 事件，不保存正文副本。不要把真实日志或个人设置加入分享的源码包。
 
@@ -124,11 +128,11 @@
 单独验证与校验：
 
 ```powershell
-.\scripts\Verify.ps1 -ExecutablePath ".\artifacts\CodexRelayUsage-1.1.0-win-x64\CodexRelayUsage.exe"
-Get-FileHash ".\artifacts\CodexRelayUsage-1.1.0-win-x64.zip" -Algorithm SHA256
+.\scripts\Verify.ps1 -ExecutablePath ".\artifacts\CodexRelayUsage-1.1.1-win-x64\CodexRelayUsage.exe"
+Get-FileHash ".\artifacts\CodexRelayUsage-1.1.1-win-x64.zip" -Algorithm SHA256
 ```
 
-Verify 使用合成日志、费用设置窗体和 Windows 原生窗体探针，需要可创建 WinForms 窗口的 Windows 桌面，不依赖 Codex 登录或真实会话。结果为 self-test.json、cost-ui.json、native-result.json、verification.json。交付检查与待实际操作的验收场景见 `ACCEPTANCE.zh-CN.md`。
+Verify 使用合成日志、费用设置窗体和 Windows 原生窗体探针，需要可创建 WinForms 窗口的 Windows 桌面，不依赖 Codex 登录或真实会话。结果为 self-test.json、cost-ui.json、feedback-ui.json、native-result.json、verification.json。工具栏交互探针向合成测试窗口发送真实鼠标消息，验证悬停／按下画面差异、展开区域、取消点击、捕获丢失和动画结束；不移动你的鼠标。交付检查与待实际操作的验收场景见 `ACCEPTANCE.zh-CN.md`。
 
 只读费用诊断可执行 `CodexRelayUsage.exe --cost-log-probe "D:\private-check.json" "会话完整ID"`，支持附加 `--sessions`。使用内存中的合成价格核对真实账本，仅输出状态、调用数和核对结果，不输出会话 ID、模型名、Token 数量或金额，不修改个人价格。该文件留在本机。
 

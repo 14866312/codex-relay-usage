@@ -42,6 +42,10 @@ $costUiPath = Join-Path $outputRoot "cost-ui.json"
 Invoke-Probe -Arguments @("--cost-ui-probe", $costUiPath)
 $costUi = Get-Content -LiteralPath $costUiPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($costUi.Failed -ne 0) { throw "费用窗口检查失败，请查看 $costUiPath" }
+$feedbackUiPath = Join-Path $outputRoot "feedback-ui.json"
+Invoke-Probe -Arguments @("--feedback-ui-probe", $feedbackUiPath)
+$feedbackUi = Get-Content -LiteralPath $feedbackUiPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($feedbackUi.Failed -ne 0) { throw "工具栏交互检查失败，请查看 $feedbackUiPath" }
 
 $nativePath = Join-Path $outputRoot "native-result.json"
 $fixture = Join-Path $repositoryRoot "tests/fixtures/FormProbe.json"
@@ -56,7 +60,7 @@ function Check {
 Check "tool window" $c.WsExToolWindowPresent
 Check "normal window does not activate" $c.WsExNoActivatePresent
 Check "normal mouse click preserves input focus" ($c.MouseActivateResult -eq 3)
-Check "native shadow" $c.CsDropShadowPresent
+Check "toolbar has no heavy native shadow" (-not $c.CsDropShadowPresent)
 Check "expanded region matches capsule plus panel" $c.ExpandedRegionMatchesUnion
 Check "capsule click delivered once" ($c.NormalCapsuleClickCount -eq 1)
 Check "normal mode does not intercept Enter" (-not $c.NormalCommandIntercepted)
@@ -82,9 +86,11 @@ $summary = [pscustomobject]@{
     NativeFailed = $failed
     CostUiPassed = $costUi.Passed
     CostUiFailed = $costUi.Failed
+    FeedbackUiPassed = $feedbackUi.Passed
+    FeedbackUiFailed = $feedbackUi.Failed
     PeArchitecture = "x64"
     Checks = $checks.ToArray()
 }
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outputRoot "verification.json") -Encoding UTF8
 if ($failed -gt 0) { throw "原生窗口测试失败，请查看 $outputRoot" }
-Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、$($costUi.Passed) 项费用窗口检查、x64 PE。"
+Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、$($costUi.Passed) 项费用窗口检查、$($feedbackUi.Passed) 项工具栏交互检查、x64 PE。"

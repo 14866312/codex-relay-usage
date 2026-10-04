@@ -10,6 +10,13 @@ internal static class DiagnosticsRunner
     public static bool TryRun(IReadOnlyList<string> args, string root)
     {
         if (args.Count < 2) return false;
+        if (args[0] == "--feedback-ui-probe")
+        {
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); Application.EnableVisualStyles();
+            var result = FeedbackUiTests.Run(args.Count > 2 ? args[2] : null);
+            File.WriteAllText(args[1], JsonSerializer.Serialize(result, JsonOptions));
+            Environment.ExitCode = result.Failed == 0 ? 0 : 1; return true;
+        }
         if (args[0] == "--cost-log-probe" && args.Count > 2)
         {
             var result = CostLogProbe.Run(root, args[2]);

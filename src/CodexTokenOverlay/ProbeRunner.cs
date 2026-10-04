@@ -1037,19 +1037,19 @@ internal static class ProbeRunner
     private static bool RegionMatchesLayout(TokenStripForm form, OverlayLayoutResult layout)
     {
         using var path = new GraphicsPath();
-        var dpi = layout.Dpi == 0 ? 96u : layout.Dpi;
+        var metrics = OverlayRenderMetrics.Create(layout.Dpi, layout.ScalePercent);
         if (!layout.CapsuleBounds.IsEmpty)
         {
             using var capsule = CreateRoundedRectanglePath(
                 layout.CapsuleBounds.ToRectangle(),
-                ScaleDip(10, dpi));
+                metrics.CapsuleRadius);
             path.AddPath(capsule, connect: false);
         }
         if (!layout.PanelBounds.IsEmpty)
         {
             using var panel = CreateRoundedRectanglePath(
                 layout.PanelBounds.ToRectangle(),
-                ScaleDip(14, dpi));
+                metrics.PanelRadius);
             path.AddPath(panel, connect: false);
         }
 
