@@ -200,6 +200,7 @@ internal static class DiagnosticsRunner
             Check("corrupt settings recover", OverlaySettings.ParseJson("bad-json").Settings.CollapsedPrimaryField == DisplayField.Total);
             TitleBarPlacementTests.Run(Check, directory);
             ConversationSwitchTests.Run(Check, directory);
+            SidebarIdentificationTests.Run(Check, directory);
             SessionCostTests.Run(Check, directory);
             LiveUsageTests.Run(Check, directory);
             foreach (var dpi in new uint[] { 96, 120, 144, 192 })

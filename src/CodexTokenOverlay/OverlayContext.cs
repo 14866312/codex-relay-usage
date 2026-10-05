@@ -44,6 +44,7 @@ internal sealed class OverlayContext : ApplicationContext
     private CancellationTokenSource? _readCancellation;
     private TokenSnapshot? _lastSnapshot => _selection.Snapshot;
     private bool _manuallyHidden;
+    private bool _bindingPickerOpen;
     private int _pollInFlight;
     private int _disposed;
     private int _logRefreshQueued;
@@ -97,6 +98,9 @@ internal sealed class OverlayContext : ApplicationContext
         var selectItem = new ToolStripMenuItem("手动选择并锁定会话…");
         selectItem.Click += async (_, _) => await SelectSessionAsync();
         menu.Items.Add(selectItem);
+        var bindItem = new ToolStripMenuItem("绑定当前对话并自动跟随…");
+        bindItem.Click += async (_, _) => await BindVisibleSessionAsync();
+        menu.Items.Add(bindItem);
         var directoryItem = new ToolStripMenuItem("选择 Codex 日志目录…");
         directoryItem.Click += (_, _) => SelectLogDirectory();
         menu.Items.Add(directoryItem);
@@ -541,6 +545,8 @@ internal sealed class OverlayContext : ApplicationContext
         _pendingRouteStatus, _selection.Revision, _selection.ThreadId, _lastSnapshot?.ThreadId,
         _lastSnapshot?.EffectiveTotalTokens, _lastSnapshot?.TurnCount, _selection.Error);
 
+    internal void HideConversationProbe() { _manuallyHidden = true; Tick(); }
+
     // Uses the production read/publication path with synthetic logs and no visible overlay.
     // Disabling the ordinary timer proves that notifications alone publish new usage.
     internal void StartNotificationsOnlyProbe()
@@ -615,6 +621,48 @@ internal sealed class OverlayContext : ApplicationContext
         }
         if (_currentTarget is not null) SetForegroundWindow(_currentTarget.HostWindow.Handle);
         Tick();
+    }
+
+    private async Task BindVisibleSessionAsync()
+    {
+        if (_bindingPickerOpen) return;
+        // Capture before the modal picker. Even A -> B -> A invalidates this target.
+        var target = _routeMonitor.CaptureBindingTarget();
+        if (target is null)
+        {
+            _trayIcon.ShowBalloonTip(5000, "当前对话无法绑定", "请打开 Codex 侧栏并显示要绑定的对话，稍候重试。", ToolTipIcon.Info);
+            return;
+        }
+        _bindingPickerOpen = true;
+        try
+        {
+            CollapseAndHide();
+            var entries = await Task.Run(() => _monitor.ListSessions());
+            if (Volatile.Read(ref _disposed) != 0) return;
+            using var picker = new SessionPickerForm(entries.Where(e => e.Title == target.Title).ToArray(), target.Title);
+            if (picker.ShowDialog() == DialogResult.OK && picker.SelectedThreadId is { } id)
+            {
+                var error = await _routeMonitor.BindAsync(target, id);
+                if (Volatile.Read(ref _disposed) != 0) return;
+                if (error is not null)
+                    MessageBox.Show(error, "绑定未完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                else
+                {
+                    _manualThreadId = null; _settings.PinnedThreadId = null;
+                    _pinSessionMenuItem.Checked = false; _settings.Save(_settingsPath); _selectionRevision++;
+                    _trayIcon.ShowBalloonTip(4000, "已绑定当前对话", "切换对话后继续自动跟随；Codex 重启或侧栏条目重建后需重新核对。", ToolTipIcon.Info);
+                }
+            }
+        }
+        finally
+        {
+            _bindingPickerOpen = false;
+            if (Volatile.Read(ref _disposed) == 0)
+            {
+                if (_currentTarget is not null) SetForegroundWindow(_currentTarget.HostWindow.Handle);
+                Tick();
+            }
+        }
     }
 
     private void SelectLogDirectory()

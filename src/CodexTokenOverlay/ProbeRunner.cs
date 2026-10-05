@@ -16,6 +16,47 @@ internal static class ProbeRunner
 
     public static bool TryRun(IReadOnlyList<string> args, string sessionRoot)
     {
+        // Validate the production fresh-view binding on the local desktop only.
+        // This output includes local identifiers and must never be packaged.
+        if (args.Count >= 3 && args[0].Equals("--sidebar-binding-probe", StringComparison.OrdinalIgnoreCase))
+        {
+            PrepareWindowProbeDpiAwareness();
+            using var monitor = new CodexVisibleThreadMonitor(sessionRoot);
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            SidebarBindingTarget? target;
+            do { Thread.Sleep(100); target = monitor.CaptureBindingTarget(); }
+            while (target is null && DateTime.UtcNow < deadline);
+            var before = monitor.GetStatus();
+            var error = target is null ? "当前侧栏无法稳定识别" : monitor.BindAsync(target, args[2]).GetAwaiter().GetResult();
+            if (error is null)
+            {
+                deadline = DateTime.UtcNow.AddSeconds(2);
+                while (monitor.GetStatus().Identification != "侧栏绑定" && DateTime.UtcNow < deadline) Thread.Sleep(50);
+            }
+            WriteJson(args[1], new { Before = before, Error = error, After = monitor.GetStatus() });
+            return true;
+        }
+        // Opt-in local chrome-only diagnostics. Never include this output in a release.
+        if (args.Count >= 2 && args[0].Equals("--view-probe", StringComparison.OrdinalIgnoreCase))
+        {
+            PrepareWindowProbeDpiAwareness();
+            var count = args.Count >= 3 && int.TryParse(args[2], out var samples) ? Math.Clamp(samples, 1, 100) : 20;
+            var index = new SessionTitleIndex(); index.SetRoot(sessionRoot);
+            var projects = new LocalProjectIndex(); projects.SetRoot(sessionRoot);
+            var resolver = new SidebarSessionResolver();
+            using var sidebar = new CodexSidebarAccessibility();
+            using var stream = new StreamWriter(args[1], false, new UTF8Encoding(false)) { AutoFlush = true };
+            for (var i = 0; i < count; i++)
+            {
+                index.Refresh(); projects.Refresh();
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                var view = CodexViewIdentityReader.Read(sidebar);
+                var result = resolver.Resolve(view, index.Titles, projects);
+                stream.WriteLine(JsonSerializer.Serialize(new { ElapsedMs = clock.Elapsed.TotalMilliseconds, View = view, Result = result }));
+                Thread.Sleep(150);
+            }
+            return true;
+        }
         // Exercise the same UI selection, cancellation and publication path used by the shipped overlay.
         // This opt-in local trace contains IDs/totals only and never saves conversation text or settings.
         if (args.Count >= 2 && args[0].Equals("--follow-probe", StringComparison.OrdinalIgnoreCase))
@@ -24,6 +65,7 @@ internal static class ProbeRunner
             var seconds = args.Count >= 3 && int.TryParse(args[2], out var duration) ? Math.Clamp(duration, 1, 120) : 30;
             var settingsPath = Path.Combine(Path.GetTempPath(), "CodexRelayUsage-probe-" + Guid.NewGuid().ToString("N"), "settings.json");
             using var context = new OverlayContext(sessionRoot, settingsPath, useSavedRoot: false);
+            if (args.Contains("--hidden")) context.HideConversationProbe();
             using var samples = new System.Windows.Forms.Timer { Interval = 50 };
             using var stream = new StreamWriter(args[1], false, new UTF8Encoding(false)) { AutoFlush = true };
             var deadline = DateTime.UtcNow.AddSeconds(seconds);

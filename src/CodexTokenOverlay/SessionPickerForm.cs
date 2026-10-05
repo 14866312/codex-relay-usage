@@ -6,17 +6,20 @@ internal sealed class SessionPickerForm : Form
     private readonly TextBox _filter = new() { Dock = DockStyle.Top, PlaceholderText = "搜索会话标题、ID 或工作目录" };
     private readonly ListView _list = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false, HideSelection = false };
     public string? SelectedThreadId { get; private set; }
-    public SessionPickerForm(IReadOnlyList<SessionEntry> sessions)
+    public SessionPickerForm(IReadOnlyList<SessionEntry> sessions, string? bindingTitle = null)
     {
-        _sessions = sessions; Text = "选择会话（选择后锁定）"; StartPosition = FormStartPosition.CenterScreen;
+        _sessions = sessions; Text = bindingTitle is null ? "选择会话（选择后锁定）" : "绑定当前对话并自动跟随"; StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(850, 520); MinimumSize = new Size(620, 340); Font = new Font("Microsoft YaHei UI", 9);
         _list.Columns.Add("标题 / ID", 340); _list.Columns.Add("最后写入", 150); _list.Columns.Add("工作目录", 300);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 46, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8) };
         var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel };
-        var choose = new Button { Text = "选择并锁定", Width = 110 };
+        var choose = new Button { Text = bindingTitle is null ? "选择并锁定" : "绑定并跟随", Width = 110 };
         choose.Click += (_, _) => Choose(); _list.DoubleClick += (_, _) => Choose();
         buttons.Controls.Add(cancel); buttons.Controls.Add(choose);
         Controls.Add(_list); Controls.Add(_filter); Controls.Add(buttons);
+        if (bindingTitle is not null)
+            Controls.Add(new Label { Text = "当前页面：" + bindingTitle + Environment.NewLine + "仅绑定此侧栏条目，切换对话后继续自动跟随。",
+                Dock = DockStyle.Top, Height = 48, Padding = new Padding(4), AutoEllipsis = true });
         AcceptButton = choose; CancelButton = cancel;
         _filter.TextChanged += (_, _) => Populate(); Populate();
     }

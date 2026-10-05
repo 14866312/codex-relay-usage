@@ -6,7 +6,8 @@ using Accessibility;
 
 namespace CodexTokenOverlay;
 
-internal sealed record CodexViewIdentity(int WindowCount, string? Title, string? ThreadId = null, string? Error = null);
+internal sealed record CodexViewIdentity(int WindowCount, string? Title, string? ThreadId = null, string? Error = null,
+    string? DocumentKey = null, SidebarViewIdentity? Sidebar = null);
 
 // Stream subscriptions survive navigation. Only the actual Codex document identifies the visible page.
 internal static class CodexViewIdentityReader
@@ -15,14 +16,14 @@ internal static class CodexViewIdentityReader
     private const int InvisibleOrOffscreen = (int)(AccessibleStates.Invisible | AccessibleStates.Offscreen);
     private static readonly Guid AccessibleInterface = new("618736E0-3C3D-11CF-810C-00AA00389B71");
 
-    public static CodexViewIdentity Read()
+    public static CodexViewIdentity Read(CodexSidebarAccessibility? sidebar = null)
     {
         var windows = CodexWindowLocator.GetVisibleMainWindows();
-        if (windows.Count != 1) return new(windows.Count, null);
-        return ReadWindow(windows[0].Handle);
+        if (windows.Count != 1) { sidebar?.Reset(); return new(windows.Count, null); }
+        return ReadWindow(windows[0].Handle, sidebar);
     }
 
-    internal static CodexViewIdentity ReadWindow(IntPtr handle)
+    internal static CodexViewIdentity ReadWindow(IntPtr handle, CodexSidebarAccessibility? sidebar = null)
     {
         try
         {
@@ -31,7 +32,7 @@ internal static class CodexViewIdentityReader
                 return new(1, null, Error: "无法读取当前页面");
             var queue = new Queue<(IAccessible Node, int Depth)>();
             var visited = new HashSet<object>();
-            var documents = new List<CodexViewIdentity>();
+            var documents = new List<(IAccessible Node, string? Url)>();
             queue.Enqueue((accessible, 0));
             // Stop at documents: never walk the conversation's text, tool output, or browser contents.
             while (queue.Count > 0 && visited.Count < 256)
@@ -42,7 +43,7 @@ internal static class CodexViewIdentityReader
                 if (node.get_accRole(0) is int role && role == DocumentRole)
                 {
                     var url = node.get_accValue(0);
-                    if (IsCodexDocument(url)) documents.Add(new(1, node.get_accName(0), ThreadIdFromUrl(url)));
+                    if (IsCodexDocument(url)) documents.Add((node, url));
                     continue;
                 }
                 var count = Math.Min(64, node.accChildCount);
@@ -52,10 +53,20 @@ internal static class CodexViewIdentityReader
                 foreach (var child in children.Take(actual))
                     if (child is IAccessible nested) queue.Enqueue((nested, depth + 1));
             }
-            return documents.Count == 1 ? documents[0] : new(1, null, Error: "无法唯一识别当前页面");
+            if (documents.Count != 1) { sidebar?.Reset(); return new(1, null, Error: "无法唯一识别当前页面"); }
+            var document = documents[0];
+            var title = document.Node.get_accName(0);
+            using var metadata = new AccessibleMetadata(document.Node);
+            GetWindowThreadProcessId(handle, out var pid);
+            long lifetime;
+            using (var process = Process.GetProcessById((int)pid)) lifetime = process.StartTime.ToUniversalTime().Ticks;
+            var owner = metadata.UniqueId() is { } id ? $"{handle.ToInt64()}/{pid}/{lifetime}/{id}" : null;
+            var rows = owner is null ? null : sidebar?.Read(document.Node, owner, title);
+            return new(1, title, ThreadIdFromUrl(document.Url), DocumentKey: owner, Sidebar: rows);
         }
-        catch (Exception e) when (e is COMException or InvalidCastException or InvalidOperationException or UnauthorizedAccessException)
+        catch (Exception e) when (e is COMException or InvalidCastException or InvalidOperationException or UnauthorizedAccessException or ArgumentException or System.ComponentModel.Win32Exception)
         {
+            sidebar?.Reset();
             return new(1, null, Error: "当前页面暂时无法读取");
         }
     }
@@ -70,6 +81,16 @@ internal static class CodexViewIdentityReader
         return path.Length == 2 && path[0] is "thread" or "threads" && Guid.TryParseExact(path[1], "D", out var id)
             ? id.ToString() : null;
     }
+    internal static IReadOnlyList<IAccessible> Children(IAccessible node, int maximum)
+    {
+        var count = node.accChildCount;
+        if (count > maximum) throw new InvalidOperationException("侧栏内容超出读取范围");
+        if (count <= 0) return [];
+        var children = new object[count];
+        return AccessibleChildren(node, 0, count, children, out var actual) < 0 ? []
+            : children.Take(actual).OfType<IAccessible>().ToArray();
+    }
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr handle, out uint pid);
 
     [DllImport("oleacc.dll")]
     private static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint objectId, ref Guid iid,
@@ -81,6 +102,7 @@ internal static class CodexViewIdentityReader
 
 internal sealed class SessionTitleIndex
 {
+    public IReadOnlyDictionary<string, string> Titles => _titlesById;
     private string _path = "";
     private DateTime _writeUtc;
     private long _length = -1;
@@ -140,6 +162,7 @@ internal sealed class SessionTitleIndex
 
 internal sealed class CodexVisibleThreadMonitor : IDisposable
 {
+    private sealed record BindingRequest(SidebarBindingTarget Target, string ThreadId, TaskCompletionSource<string?> Completion);
     private readonly object _sync = new();
     private readonly CodexIpcActiveThreadMonitor _ipc = new();
     private readonly CancellationTokenSource _cancellation = new();
@@ -147,6 +170,9 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
     private readonly Thread _runner;
     private ActiveThreadRouteStatus _status = new(null, 0, false, 0, null);
     private string _root;
+    private long _rootRevision;
+    private CodexViewIdentity? _view;
+    private BindingRequest? _bindingRequest;
     private long _lastReadTimestamp = Stopwatch.GetTimestamp();
     private int _disposed;
 
@@ -173,29 +199,85 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
         lock (_sync)
         {
             if (string.Equals(_root, root, StringComparison.OrdinalIgnoreCase)) return;
-            _root = root;
+            _root = root; _rootRevision++; _view = null;
             _status = _status with { ThreadId = null, Version = _status.Version + 1 };
         }
         _wake.Set();
     }
+    public SidebarBindingTarget? CaptureBindingTarget()
+    {
+        lock (_sync)
+            return _status.IsConnected && _status.ActiveWindowCount == 1 && Stopwatch.GetElapsedTime(_lastReadTimestamp) < TimeSpan.FromSeconds(1)
+                && _view is { Error: null, WindowCount: 1, Sidebar.Rows.Count: > 0, Title: not null } view
+                ? new(_rootRevision, _status.Version, SidebarSessionResolver.ViewKey(view), view.Title) : null;
+    }
+    public async Task<string?> BindAsync(SidebarBindingTarget target, string threadId)
+    {
+        BindingRequest request;
+        lock (_sync)
+        {
+            if (_disposed != 0) return "工具已退出";
+            _bindingRequest?.Completion.TrySetResult("绑定操作已被更新的操作替换");
+            var completion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            request = new(target, threadId, completion); _bindingRequest = request; _wake.Set();
+        }
+        try { return await request.Completion.Task.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); }
+        catch (TimeoutException)
+        {
+            lock (_sync)
+            {
+                // Remove the queued request before reporting failure. A late
+                // renderer response must never establish a binding after timeout.
+                if (request.Completion.Task.IsCompletedSuccessfully) return request.Completion.Task.Result;
+                if (ReferenceEquals(_bindingRequest, request)) _bindingRequest = null;
+                const string error = "当前页面核对超时，请稍后重新绑定";
+                request.Completion.TrySetResult(error); return error;
+            }
+        }
+    }
+    internal static ActiveThreadRouteStatus Advance(ActiveThreadRouteStatus previous, ActiveThreadRouteStatus next)
+    {
+        next = next with { Version = previous.Version };
+        return next == previous ? previous : next with { Version = previous.Version + 1 };
+    }
     private void Run()
     {
         var index = new SessionTitleIndex();
+        var projects = new LocalProjectIndex();
+        var resolver = new SidebarSessionResolver();
+        using var sidebar = new CodexSidebarAccessibility();
+        long observedRoot = -1;
         try
         {
             while (!_cancellation.IsCancellationRequested)
             {
-                string root; lock (_sync) root = _root;
+                string root; long rootRevision; lock (_sync) { root = _root; rootRevision = _rootRevision; }
                 ActiveThreadRouteStatus next;
+                CodexViewIdentity? observedView = null;
                 try
                 {
                     index.SetRoot(root); index.Refresh(_cancellation.Token);
-                    var view = CodexViewIdentityReader.Read();
+                    projects.SetRoot(root); projects.Refresh();
+                    if (observedRoot != rootRevision) { resolver.Reset(); sidebar.Reset(); observedRoot = rootRevision; }
+                    var view = CodexViewIdentityReader.Read(sidebar);
+                    observedView = view;
                     var ipc = _ipc.GetStatus();
-                    var id = ipc.IsConnected ? index.Resolve(view) : null;
-                    var error = view.Error ?? (id is null && view.WindowCount == 1
-                        ? index.Error ?? "当前页面标题无法唯一匹配会话" : null);
-                    next = new(id, view.WindowCount, ipc.IsConnected, 0, error);
+                    var key = SidebarSessionResolver.ViewKey(view);
+                    lock (_sync)
+                    {
+                        if (_bindingRequest is { } request)
+                        {
+                            _bindingRequest = null;
+                            string? bindError = "选择期间当前对话发生变化，请重新绑定";
+                            if (rootRevision == _rootRevision && request.Target.Matches(rootRevision, _status.Version, view, ipc.IsConnected))
+                                resolver.TryBind(view, request.ThreadId, index.Titles, projects, out bindError);
+                            request.Completion.TrySetResult(bindError);
+                        }
+                    }
+                    var resolved = resolver.Resolve(view, index.Titles, projects);
+                    var id = ipc.IsConnected ? resolved.ThreadId : null;
+                    var error = view.Error ?? (id is null && view.WindowCount == 1 ? index.Error ?? resolved.Error : null);
+                    next = new(id, view.WindowCount, ipc.IsConnected, 0, error, key, resolved.Method);
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or COMException or InvalidOperationException)
                 {
@@ -204,11 +286,11 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                 lock (_sync)
                 {
                     // A directory change that raced the accessibility read must not restore an old identity.
-                    if (string.Equals(root, _root, StringComparison.OrdinalIgnoreCase))
+                    if (rootRevision == _rootRevision)
                     {
+                        _view = observedView;
                         _lastReadTimestamp = Stopwatch.GetTimestamp();
-                        next = next with { Version = _status.Version };
-                        if (next != _status) _status = next with { Version = _status.Version + 1 };
+                        _status = Advance(_status, next);
                     }
                 }
                 _wake.WaitOne(150);
@@ -220,6 +302,7 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _cancellation.Cancel(); _wake.Set();
+        lock (_sync) { _bindingRequest?.Completion.TrySetResult("工具已退出"); _bindingRequest = null; }
         // An inaccessible or hung renderer may take longer to answer; never block the UI indefinitely.
         if (_runner.Join(500)) { _wake.Dispose(); _cancellation.Dispose(); }
         _ipc.Dispose();

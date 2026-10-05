@@ -52,7 +52,8 @@ internal static class FollowSelection
     public static string Status(ActiveThreadRouteStatus route, string? manualId) =>
         !string.IsNullOrWhiteSpace(manualId) ? "手动锁定" :
         route.ActiveWindowCount > 1 ? "多窗口：请手动选择会话" :
-        route.IsConnected && route.ActiveWindowCount == 1 && !string.IsNullOrWhiteSpace(route.ThreadId) ? "自动跟随" :
+        route.IsConnected && route.ActiveWindowCount == 1 && !string.IsNullOrWhiteSpace(route.ThreadId)
+            ? "自动跟随" + (route.Identification is null ? "" : " · " + route.Identification) :
         !route.IsConnected ? "IPC 未连接 · 可手动选择" :
         (route.LastError ?? (route.ActiveWindowCount == 0 ? "未找到可见 Codex 主窗口" : "无法识别当前对话")) + " · 可手动选择";
 }
