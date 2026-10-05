@@ -21,6 +21,7 @@ internal sealed class TokenLogMonitor : IDisposable
     private DateTime _lastScan;
     private bool _disposed;
     public string? LastError { get; private set; }
+    public event Action? DataChanged;
 
     public TokenLogMonitor(string? sessionRoot = null)
     {
@@ -76,15 +77,21 @@ internal sealed class TokenLogMonitor : IDisposable
             {
                 var watcher = new FileSystemWatcher(root, "*.jsonl")
                 { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size };
-                watcher.Changed += (_, _) => Interlocked.Exchange(ref _dirty, 1);
-                watcher.Created += (_, _) => Interlocked.Exchange(ref _dirty, 1);
-                watcher.Deleted += (_, _) => Interlocked.Exchange(ref _dirty, 1);
-                watcher.Renamed += (_, _) => Interlocked.Exchange(ref _dirty, 1);
-                watcher.Error += (_, _) => Interlocked.Exchange(ref _dirty, 1);
+                // Appending to a known log needs an incremental read, not a full directory scan.
+                watcher.Changed += (_, _) => DataChanged?.Invoke();
+                watcher.Created += (_, _) => NotifyCatalogChange();
+                watcher.Deleted += (_, _) => NotifyCatalogChange();
+                watcher.Renamed += (_, _) => NotifyCatalogChange();
+                watcher.Error += (_, _) => NotifyCatalogChange();
                 watcher.EnableRaisingEvents = true; _watchers.Add(watcher);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { }
         }
+    }
+    private void NotifyCatalogChange()
+    {
+        Interlocked.Exchange(ref _dirty, 1);
+        DataChanged?.Invoke();
     }
     public IReadOnlyList<SessionEntry> ListSessions()
     {
@@ -191,11 +198,13 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
     private long _offset, _knownLength;
     private readonly MemoryStream _partial = new();
     private readonly HashSet<string> _turns = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _runningTurns = new(StringComparer.Ordinal);
     private bool _skipLine, _usageRecorded, _totalTokenInvalid;
     private DateTime _writeUtc, _creationUtc, _updatedUtc;
     private long? _total, _input, _cache, _output, _reasoning, _contextUsed, _contextWindow;
     private string? _model, _parseIssue;
     private SessionUsageLedger _ledger = new(threadId);
+    private LiveTokenUsageAccumulator _liveUsage = new();
     public string Path { get; } = path;
     public TokenSnapshot? Snapshot { get; private set; }
     internal long TotalBytesRead { get; private set; }
@@ -232,8 +241,16 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
             blockProcessed?.Invoke();
         }
         info.Refresh(); _writeUtc = info.LastWriteTimeUtc; _creationUtc = info.CreationTimeUtc; _knownLength = stream.Length;
-        Snapshot = new TokenSnapshot(threadId, Path, _total, _input, _cache, _output, _reasoning,
-            _contextUsed, _contextWindow, _updatedUtc, _model, _turns.Count, _parseIssue, _usageRecorded, _totalTokenInvalid, _ledger.Snapshot());
+        var ledger = _ledger.Snapshot();
+        var live = _liveUsage.Select(new(_input, _cache, null, _output, _reasoning, _total, _parseIssue), _usageRecorded);
+        var issues = new[] { _parseIssue, _liveUsage.Issue }.OfType<string>().Concat(ledger.Issues).Distinct().ToArray();
+        Snapshot = new TokenSnapshot(threadId, Path, live?.Total ?? (live is null ? _total : TokenSnapshot.Sum(live.Input, live.Output)),
+            live is null ? _input : live.Input, live is null ? _cache : live.CacheRead,
+            live is null ? _output : live.Output, live is null ? _reasoning : live.Reasoning,
+            _contextUsed, _contextWindow, _updatedUtc, _model, _turns.Count,
+            issues.Length == 0 ? live?.ParseIssue : string.Join("；", issues), _usageRecorded || live is not null,
+            live is null ? _totalTokenInvalid : live.ParseIssue?.Contains("total_tokens", StringComparison.Ordinal) == true, ledger,
+            _runningTurns.Count > 0, _liveUsage.Source);
         return Snapshot;
     }
     private void Append(ReadOnlySpan<byte> bytes)
@@ -248,6 +265,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
         _total = _input = _cache = _output = _reasoning = _contextUsed = _contextWindow = null;
         _model = _parseIssue = null; _updatedUtc = default; Snapshot = null;
         _ledger = new(threadId);
+        _liveUsage = new(); _runningTurns.Clear();
     }
     private void Process(byte[] bytes)
     {
@@ -259,10 +277,36 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
             if (!root.TryGetProperty("payload", out var payload) || payload.ValueKind != JsonValueKind.Object) return;
             var type = String(root, "type");
             if (type == "turn_context") { _ledger.ObserveContext(payload); _model = String(payload, "model") ?? _model; return; }
-            if (type == "token_usage_record") { _ledger.ObserveRecord(payload); return; }
+            if (type == "token_usage_record")
+            {
+                if (_ledger.ObserveRecord(payload))
+                {
+                    var usageRecord = payload.TryGetProperty("usage", out var raw) && raw.ValueKind == JsonValueKind.Object
+                        ? UsageAmounts.Parse(raw) : new UsageAmounts(null, null, null, null);
+                    var aggregate = payload.TryGetProperty("thread_token_usage", out var reported) && reported.ValueKind == JsonValueKind.Object
+                        ? UsageAmounts.Parse(reported) : null;
+                    var hasIdentity = new[] { String(payload, "thread_id"), String(payload, "session_id"), String(payload, "response_id") }
+                        .All(value => !string.IsNullOrWhiteSpace(value));
+                    _liveUsage.Observe(usageRecord, aggregate, hasIdentity);
+                    _contextUsed = usageRecord.Total ?? TokenSnapshot.Sum(usageRecord.Input, usageRecord.Output);
+                    UpdateTimestamp(root);
+                }
+                return;
+            }
             if (type != "event_msg") return;
             var eventType = String(payload, "type");
-            if (eventType == "task_started") { var turn = String(payload, "turn_id"); if (turn is not null) _turns.Add(turn); return; }
+            if (eventType == "task_started")
+            {
+                var turn = String(payload, "turn_id");
+                if (turn is not null) { _turns.Add(turn); _runningTurns.Add(turn); }
+                return;
+            }
+            if (eventType is "task_complete" or "task_completed" or "turn_aborted")
+            {
+                if (String(payload, "turn_id") is { } turn) _runningTurns.Remove(turn);
+                else _runningTurns.Clear();
+                return;
+            }
             if (eventType != "token_count" || !payload.TryGetProperty("info", out var usage) || usage.ValueKind != JsonValueKind.Object) return;
             var issues = new List<string>();
             if (usage.TryGetProperty("total_token_usage", out var total) && total.ValueKind == JsonValueKind.Object)
@@ -281,10 +325,14 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
                 _contextUsed = Number(last, "total_tokens", issues) ?? TokenSnapshot.Sum(Number(last, "input_tokens", issues), Number(last, "output_tokens", issues));
             _contextWindow = Number(usage, "model_context_window", issues);
             if (issues.Count > 0) _parseIssue = string.Join("；", issues.Distinct());
-            if (DateTime.TryParse(String(root, "timestamp"), null, System.Globalization.DateTimeStyles.RoundtripKind, out var stamp))
-                _updatedUtc = stamp.ToUniversalTime();
+            UpdateTimestamp(root);
         }
         catch (JsonException) { /* Partial lines are never passed here; a damaged full row is ignored. */ }
+    }
+    private void UpdateTimestamp(JsonElement root)
+    {
+        if (DateTime.TryParse(String(root, "timestamp"), null, System.Globalization.DateTimeStyles.RoundtripKind, out var stamp))
+            _updatedUtc = stamp.ToUniversalTime();
     }
     internal static string? String(JsonElement element, string name) => element.ValueKind == JsonValueKind.Object &&
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;

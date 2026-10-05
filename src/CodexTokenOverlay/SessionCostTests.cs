@@ -169,7 +169,7 @@ internal static class SessionCostTests
         var r = calculator.Calculate(snapshot.Ledger!, prices);
         check("modern records parsed by actual reader", r.Amounts?.Total == .06725985m);
         var modernPresentation = OverlayPresentationBuilder.Create(snapshot, DisplayField.Total, DisplayField.Cost, DisplayField.Cost, r);
-        check("modern fee visible before cumulative token snapshot arrives", !snapshot.UsageRecorded && modernPresentation.StatusText is null && modernPresentation.Secondary.Value == "估算 $0.0673");
+        check("modern tokens and fee visible before cumulative token snapshot arrives", snapshot.UsageRecorded && snapshot.TotalTokens == 97_603 && modernPresentation.StatusText is null && modernPresentation.Secondary.Value == "估算 $0.0673");
         var legacy = Row("event_msg", new { type = "token_count", info = new { total_token_usage = Usage(SampleUsage) } });
         File.AppendAllText(path, legacy + legacy, encoding); snapshot = monitor.Poll(true)!;
         check("cumulative snapshots display tokens without extra fees", snapshot.TotalTokens == 97_603 && calculator.Calculate(snapshot.Ledger!, prices).Amounts?.Total == .06725985m);

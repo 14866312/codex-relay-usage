@@ -46,6 +46,10 @@ $feedbackUiPath = Join-Path $outputRoot "feedback-ui.json"
 Invoke-Probe -Arguments @("--feedback-ui-probe", $feedbackUiPath)
 $feedbackUi = Get-Content -LiteralPath $feedbackUiPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($feedbackUi.Failed -ne 0) { throw "工具栏交互检查失败，请查看 $feedbackUiPath" }
+$liveUiPath = Join-Path $outputRoot "live-ui.json"
+Invoke-Probe -Arguments @("--live-ui-probe", $liveUiPath)
+$liveUi = Get-Content -LiteralPath $liveUiPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($liveUi.Failed -ne 0) { throw "实时更新及窗口跟随检查失败，请查看 $liveUiPath" }
 
 $nativePath = Join-Path $outputRoot "native-result.json"
 $fixture = Join-Path $repositoryRoot "tests/fixtures/FormProbe.json"
@@ -88,9 +92,13 @@ $summary = [pscustomobject]@{
     CostUiFailed = $costUi.Failed
     FeedbackUiPassed = $feedbackUi.Passed
     FeedbackUiFailed = $feedbackUi.Failed
+    LiveUiPassed = $liveUi.Passed
+    LiveUiFailed = $liveUi.Failed
+    LogAppendToPublication = $liveUi.LogAppendToPublication
+    HostMoveToOverlay = $liveUi.HostMoveToOverlay
     PeArchitecture = "x64"
     Checks = $checks.ToArray()
 }
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outputRoot "verification.json") -Encoding UTF8
 if ($failed -gt 0) { throw "原生窗口测试失败，请查看 $outputRoot" }
-Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、$($costUi.Passed) 项费用窗口检查、$($feedbackUi.Passed) 项工具栏交互检查、x64 PE。"
+Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、$($costUi.Passed) 项费用窗口检查、$($feedbackUi.Passed) 项工具栏交互检查、$($liveUi.Passed) 项实时更新及跟随检查、x64 PE。"

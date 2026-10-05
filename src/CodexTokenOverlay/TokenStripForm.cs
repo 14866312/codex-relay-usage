@@ -241,6 +241,8 @@ internal sealed class TokenStripForm : Form
     public void SetPresentation(OverlayPresentation presentation)
     {
         ArgumentNullException.ThrowIfNull(presentation);
+        if (_presentation is not null && _presentation.ExpandedRows.SequenceEqual(presentation.ExpandedRows)
+            && _presentation == presentation with { ExpandedRows = _presentation.ExpandedRows }) return;
         _presentation = presentation;
         Invalidate();
     }
@@ -263,6 +265,7 @@ internal sealed class TokenStripForm : Form
     {
         ArgumentNullException.ThrowIfNull(layout);
         if (CurrentLayout == layout && Bounds == layout.WindowBounds.ToRectangle()) return;
+        var translation = SameClientShape(CurrentLayout, layout);
         CurrentLayout = layout;
         SetBounds(
             layout.WindowBounds.X,
@@ -270,10 +273,20 @@ internal sealed class TokenStripForm : Form
             layout.WindowBounds.Width,
             layout.WindowBounds.Height,
             BoundsSpecified.All);
+        if (translation)
+        {
+            // Moving a host preserves the client region and any hover/open animation.
+            // Updating this key also avoids rebuilding the region on the next animation tick.
+            if (SameClientShape(_regionLayout, layout)) _regionLayout = layout;
+            return;
+        }
 
         _feedback.SetExpanded(layout.State == OverlayVisualState.Expanded, Environment.TickCount64, CanAnimate);
         RefreshFeedback();
     }
+
+    private static bool SameClientShape(OverlayLayoutResult? a, OverlayLayoutResult b) =>
+        a is not null && a == b with { WindowBounds = new(a.WindowBounds.X, a.WindowBounds.Y, b.WindowBounds.Width, b.WindowBounds.Height) };
 
     private bool CanAnimate => Visible && !IsEditMode
         && (_motionEnabled ?? (SystemInformation.IsMenuAnimationEnabled && !SystemInformation.HighContrast));

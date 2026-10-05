@@ -7,7 +7,8 @@ internal sealed record TokenSnapshot(
     long? OutputTokens, long? ReasoningOutputTokens,
     long? ContextUsedTokens, long? ContextWindowTokens, DateTime UpdatedAtUtc,
     string? Model = null, int? TurnCount = null, string? ParseIssue = null,
-    bool UsageRecorded = true, bool TotalTokenInvalid = false, UsageLedgerSnapshot? Ledger = null)
+    bool UsageRecorded = true, bool TotalTokenInvalid = false, UsageLedgerSnapshot? Ledger = null,
+    bool TurnInProgress = false, string? UsageSource = null)
 {
     public static bool Valid(long? value) => value is >= 0;
     public bool CacheIsValid => Valid(InputTokens) && Valid(CachedInputTokens) && CachedInputTokens <= InputTokens;

@@ -182,6 +182,42 @@ internal static class CodexWindowLocator
         return true;
     }
 
+    // Fast path for movement of an already classified host. Identity is checked against
+    // the cached HWND/PID; process images and other desktop windows are not enumerated.
+    public static bool TryRefreshKnownGeometry(CodexWindowTarget previous, bool requireForeground, out CodexWindowTarget refreshed)
+    {
+        refreshed = null!;
+        var handle = previous.HostWindow.Handle;
+        if (!ConfirmedTargets.TryGetValue(previous, out var identity) || !IsWindow(handle)
+            || !IsWindowVisible(handle) || IsIconic(handle)
+            || (requireForeground && GetAncestor(GetForegroundWindow(), GaRoot) != handle)) return false;
+        GetWindowThreadProcessId(handle, out var processId);
+        if (!IsKnownTargetIdentityValid(identity.HostHandle, identity.ProcessId, handle.ToInt64(), processId)
+            || !GetWindowRect(handle, out var nativeBounds)) return false;
+        var bounds = ToIntRect(nativeBounds);
+        if (bounds.Width < 500 || bounds.Height < 400) return false;
+        var old = previous.HostWindow;
+        var dpi = ReadDpi(handle);
+        var workArea = IntRect.FromRectangle(Screen.FromHandle(handle).WorkingArea);
+        CodexWindowInfo info;
+        if (bounds.Width == old.WindowBounds.Width && bounds.Height == old.WindowBounds.Height
+            && dpi == old.Dpi && workArea == old.WorkingArea)
+        {
+            if (bounds == old.WindowBounds) { refreshed = previous; return true; }
+            var dx = bounds.X - old.WindowBounds.X; var dy = bounds.Y - old.WindowBounds.Y;
+            IntRect Translate(IntRect r) => new(r.X + dx, r.Y + dy, r.Width, r.Height);
+            // DWM may still describe a previous frame while the window is being dragged.
+            info = old with { WindowBounds = bounds, ExtendedFrameBounds = Translate(old.ExtendedFrameBounds),
+                CaptionButtonBounds = old.CaptionButtonBounds is { } caption ? Translate(caption) : null };
+        }
+        else if (!TryReadWindowInfo(handle, out info)) return false;
+        refreshed = new(info); RememberConfirmedTarget(refreshed, processId);
+        return true;
+    }
+
+    internal static uint ConfirmedProcessId(CodexWindowTarget target) =>
+        ConfirmedTargets.TryGetValue(target, out var identity) ? identity.ProcessId : 0;
+
     internal static bool TrySelectKnownCodexTarget(
         IntPtr previousHostHandle,
         uint expectedProcessId,
@@ -371,7 +407,7 @@ internal static class CodexWindowLocator
             BoundsReadSucceeded = false
         };
 
-    private static void RememberConfirmedTarget(CodexWindowTarget target, uint processId) =>
+    internal static void RememberConfirmedTarget(CodexWindowTarget target, uint processId) =>
         ConfirmedTargets.Add(
             target,
             new ConfirmedCodexTargetIdentity(target.HostWindow.Handle.ToInt64(), processId));

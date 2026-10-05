@@ -31,9 +31,11 @@ internal static class OverlayPresentationBuilder
         return new(Metric(snapshot, primaryField, true, cost), Metric(snapshot, secondaryField, true, cost),
             rows, context ?? 0,
             (visibleFields & DisplayField.ContextPercent) != 0 && context.HasValue,
-            snapshot.UsageRecorded || snapshot.Ledger?.Calls.Count > 0 ? null : "等待当前会话用量", Metric(snapshot, DisplayField.Total, false),
-            rounds + " · 上下文 " + Percent(context), "模型：" + Clean(snapshot.Model ?? "未提供"),
-            "Codex 本地日志 · " + ShortThreadId(snapshot.ThreadId) + " · " + time,
+            snapshot.UsageRecorded || snapshot.Ledger?.Calls.Count > 0 ? null : snapshot.TurnInProgress ? "进行中 · 等待调用报告用量" : "等待当前会话用量", Metric(snapshot, DisplayField.Total, false),
+            (snapshot.TurnInProgress ? "进行中 · " : "") + rounds + " · 上下文 " + Percent(context), "模型：" + Clean(snapshot.Model ?? "未提供"),
+            "Codex 本地日志 · " + ShortThreadId(snapshot.ThreadId) + " · " + time
+                + (snapshot.UsageSource is null ? "" : " · " + snapshot.UsageSource)
+                + (snapshot.TurnInProgress ? " · 随调用报告更新" : ""),
             IssueText: snapshot.Issue,
             EstimateText: cost is null ? null : "按当前配置估算（USD） · 已计价 " + cost.PricedCalls + "/" + cost.RecordedCalls + " 次"
                 + (cost.Status == SessionCostStatus.Partial ? " · 部分记录" : ""));

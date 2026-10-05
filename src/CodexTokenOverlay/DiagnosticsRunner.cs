@@ -10,6 +10,13 @@ internal static class DiagnosticsRunner
     public static bool TryRun(IReadOnlyList<string> args, string root)
     {
         if (args.Count < 2) return false;
+        if (args[0] == "--live-ui-probe")
+        {
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); Application.EnableVisualStyles();
+            var result = LiveUiTests.Run();
+            File.WriteAllText(args[1], JsonSerializer.Serialize(result, JsonOptions));
+            Environment.ExitCode = result.Failed == 0 ? 0 : 1; return true;
+        }
         if (args[0] == "--feedback-ui-probe")
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); Application.EnableVisualStyles();
@@ -194,6 +201,7 @@ internal static class DiagnosticsRunner
             TitleBarPlacementTests.Run(Check, directory);
             ConversationSwitchTests.Run(Check, directory);
             SessionCostTests.Run(Check, directory);
+            LiveUsageTests.Run(Check, directory);
             foreach (var dpi in new uint[] { 96, 120, 144, 192 })
             foreach (var scale in new[] { 60, 100, 130 })
             {

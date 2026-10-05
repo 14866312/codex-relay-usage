@@ -13,6 +13,8 @@ internal sealed class OverlayContext : ApplicationContext
     private readonly NotifyIcon _trayIcon;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly System.Windows.Forms.Timer _outsideClickTimer;
+    private readonly System.Windows.Forms.Timer _hostMoveTimer;
+    private readonly NativeWindowEvents _windowEvents;
     private readonly ToolStripMenuItem _sessionMenuItem;
     private readonly ToolStripMenuItem _visibilityMenuItem;
     private readonly ToolStripMenuItem _pinSessionMenuItem;
@@ -44,6 +46,10 @@ internal sealed class OverlayContext : ApplicationContext
     private bool _manuallyHidden;
     private int _pollInFlight;
     private int _disposed;
+    private int _logRefreshQueued;
+    private int _hostDiscoveryQueued;
+    private long _logChangeVersion;
+    private long _nextHostValidation;
     private string? _pendingThreadId => _selection.ThreadId;
     private ActiveThreadRouteStatus _pendingRouteStatus = new(null, 0, false, 0, null);
     private string? _manualThreadId;
@@ -207,7 +213,75 @@ internal sealed class OverlayContext : ApplicationContext
         _timer.Tick += (_, _) => Tick();
         _outsideClickTimer = new System.Windows.Forms.Timer { Interval = 40 };
         _outsideClickTimer.Tick += (_, _) => PollOutsidePointer();
+        _hostMoveTimer = new System.Windows.Forms.Timer { Interval = 16 };
+        _hostMoveTimer.Tick += (_, _) => RefreshHostGeometry();
+        _ = _form.Handle;
+        _windowEvents = new NativeWindowEvents(HandleHostWindowEvent);
+        _monitor.DataChanged += HandleLogChanged;
         _timer.Start();
+    }
+
+    private void HandleLogChanged()
+    {
+        Interlocked.Increment(ref _logChangeVersion);
+        if (Volatile.Read(ref _disposed) != 0 || Interlocked.Exchange(ref _logRefreshQueued, 1) != 0) return;
+        try
+        {
+            _form.BeginInvoke((Action)(() =>
+            {
+                Interlocked.Exchange(ref _logRefreshQueued, 0);
+                if (Volatile.Read(ref _disposed) != 0) return;
+                if (ObserveSelection()) { RefreshPresentation(); UpdateSessionMenuText(); RefreshTrayText(); }
+                RequestBackgroundPoll();
+            }));
+        }
+        catch (InvalidOperationException) { Interlocked.Exchange(ref _logRefreshQueued, 0); }
+    }
+
+    private void SetCurrentTarget(CodexWindowTarget target)
+    {
+        _currentTarget = target;
+        _windowEvents.Watch(target.HostWindow.Handle, CodexWindowLocator.ConfirmedProcessId(target));
+        if (!_windowEvents.HasLocationHook) _hostMoveTimer.Start();
+    }
+
+    private void HandleHostWindowEvent(HostWindowEvent change)
+    {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        if (change == HostWindowEvent.Destroyed)
+        {
+            _hostMoveTimer.Stop();
+            if (_manualAttachment.IsEditing) CancelManualEditing(restoreFocus: false, relayout: false);
+            _currentTarget = null; _windowEvents.Watch(IntPtr.Zero, 0);
+            _nextHostValidation = 0; CollapseAndHide(); return;
+        }
+        if (change == HostWindowEvent.MoveStarted) _hostMoveTimer.Start();
+        if (change == HostWindowEvent.MoveEnded) _hostMoveTimer.Stop();
+        RefreshHostGeometry();
+        if (change == HostWindowEvent.Foreground && !_manualAttachment.IsEditing
+            && Interlocked.Exchange(ref _hostDiscoveryQueued, 1) == 0)
+        {
+            _form.BeginInvoke((Action)(() =>
+            {
+                Interlocked.Exchange(ref _hostDiscoveryQueued, 0); Tick();
+            }));
+        }
+    }
+
+    private void RefreshHostGeometry()
+    {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        if (_manuallyHidden || _currentTarget is null
+            || !CodexWindowLocator.TryRefreshKnownGeometry(_currentTarget, !_manualAttachment.IsEditing, out var target))
+        {
+            _hostMoveTimer.Stop(); CollapseAndHide(); return;
+        }
+        SetCurrentTarget(target);
+        if (_manualAttachment.IsEditing)
+        {
+            if (_manualAttachment.ShouldApplyStaticDraft) ApplyEditDraftLayout(target);
+        }
+        else ApplyLayout(target);
     }
 
     private void AddAnchorMenu(ToolStripMenuItem menu, string text, AnchorMode mode)
@@ -349,8 +423,9 @@ internal sealed class OverlayContext : ApplicationContext
         if (_manualAttachment.IsEditing)
         {
             if (_currentTarget is null
-                || !CodexWindowLocator.TryRefreshKnownCodexTarget(
+                || !CodexWindowLocator.TryRefreshKnownGeometry(
                     _currentTarget,
+                    requireForeground: false,
                     out var refreshedTarget))
             {
                 CancelManualEditing(restoreFocus: false, relayout: false);
@@ -358,7 +433,7 @@ internal sealed class OverlayContext : ApplicationContext
                 return;
             }
 
-            _currentTarget = refreshedTarget;
+            SetCurrentTarget(refreshedTarget);
             if (_manualAttachment.ShouldApplyStaticDraft)
             {
                 ApplyEditDraftLayout(refreshedTarget);
@@ -367,7 +442,10 @@ internal sealed class OverlayContext : ApplicationContext
             return;
         }
 
-        if (_manuallyHidden || !CodexWindowLocator.TryGetForegroundCodexTarget(out var target))
+        CodexWindowTarget target = null!;
+        var fast = _currentTarget is not null && Environment.TickCount64 < _nextHostValidation
+            && CodexWindowLocator.TryRefreshKnownGeometry(_currentTarget, requireForeground: true, out target!);
+        if (_manuallyHidden || (!fast && !CodexWindowLocator.TryGetForegroundCodexTarget(out target!)))
         {
             CollapseAndHide();
             UpdateManualMenuState();
@@ -380,7 +458,8 @@ internal sealed class OverlayContext : ApplicationContext
             StopOutsideClickPolling();
         }
 
-        _currentTarget = target;
+        if (!fast) _nextHostValidation = Environment.TickCount64 + 1_000;
+        SetCurrentTarget(target!);
         ApplyLayout(target);
         UpdateManualMenuState();
     }
@@ -398,6 +477,7 @@ internal sealed class OverlayContext : ApplicationContext
         var prices = _prices;
         var manualId = _manualThreadId;
         var root = _queuedRoot;
+        var logVersion = Interlocked.Read(ref _logChangeVersion);
         var cancellation = _readCancellation = new CancellationTokenSource();
         _ = Task.Run(() =>
             {
@@ -438,7 +518,8 @@ internal sealed class OverlayContext : ApplicationContext
                     Interlocked.Exchange(ref _pollInFlight, 0);
                 }
                 // Coalesce rapid switches to the latest selection as soon as the cancelled read exits.
-                if ((request.Revision != _selection.Revision || prices.Version != _prices.Version) && Volatile.Read(ref _disposed) == 0) RequestBackgroundPoll();
+                if ((request.Revision != _selection.Revision || prices.Version != _prices.Version
+                    || logVersion != Interlocked.Read(ref _logChangeVersion)) && Volatile.Read(ref _disposed) == 0) RequestBackgroundPoll();
             }, CancellationToken.None, TaskContinuationOptions.None, uiScheduler);
     }
 
@@ -459,6 +540,14 @@ internal sealed class OverlayContext : ApplicationContext
     internal ConversationProbeSample ReadConversationProbeSample() => new(DateTime.UtcNow,
         _pendingRouteStatus, _selection.Revision, _selection.ThreadId, _lastSnapshot?.ThreadId,
         _lastSnapshot?.EffectiveTotalTokens, _lastSnapshot?.TurnCount, _selection.Error);
+
+    // Uses the production read/publication path with synthetic logs and no visible overlay.
+    // Disabling the ordinary timer proves that notifications alone publish new usage.
+    internal void StartNotificationsOnlyProbe()
+    {
+        _manuallyHidden = true; Tick(); _timer.Stop();
+    }
+    internal TokenSnapshot? ReadLiveProbeSnapshot() => _lastSnapshot;
 
     private void RefreshPresentation()
     {
@@ -1036,6 +1125,9 @@ internal sealed class OverlayContext : ApplicationContext
             _outsideClickTimer.Stop();
             _timer.Dispose();
             _outsideClickTimer.Dispose();
+            _hostMoveTimer.Dispose();
+            _windowEvents.Dispose();
+            _monitor.DataChanged -= HandleLogChanged;
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
             _readCancellation?.Cancel();

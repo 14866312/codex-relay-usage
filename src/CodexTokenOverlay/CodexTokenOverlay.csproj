@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>CodexRelayUsage</AssemblyName>
     <RootNamespace>CodexTokenOverlay</RootNamespace>
-    <Version>1.1.1</Version>
+    <Version>1.1.2</Version>
     <Authors>14866312;soleillevant0125</Authors>
     <Description>A read-only Windows overlay for Codex Desktop token usage and configurable session cost estimates.</Description>
     <RepositoryUrl>https://github.com/14866312/codex-relay-usage</RepositoryUrl>

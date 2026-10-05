@@ -86,10 +86,10 @@ internal sealed class SessionUsageLedger(string threadId)
             Max(_floor.CacheWrite, u.CacheWrite), Max(_floor.Output, u.Output));
         if (next != _floor) { _floor = next; _version++; }
     }
-    public void ObserveRecord(JsonElement payload)
+    public bool ObserveRecord(JsonElement payload)
     {
         var reportedThread = IncrementalSessionReader.String(payload, "thread_id");
-        if (reportedThread is not null && !string.Equals(reportedThread, threadId, StringComparison.OrdinalIgnoreCase)) return;
+        if (reportedThread is not null && !string.Equals(reportedThread, threadId, StringComparison.OrdinalIgnoreCase)) return false;
         var session = IncrementalSessionReader.String(payload, "session_id");
         var response = IncrementalSessionReader.String(payload, "response_id");
         var turn = IncrementalSessionReader.String(payload, "turn_id");
@@ -106,12 +106,13 @@ internal sealed class SessionUsageLedger(string threadId)
                 _calls[key] = previous with { Issue = "同一请求的记录冲突", Revision = ++_version };
                 _issues.Add("同一请求的记录冲突");
             }
-            return; // Replayed snapshots do not advance the aggregate or charge again.
+            return false; // Replayed snapshots do not advance the aggregate or charge again.
         }
         var model = turn is not null && _models.TryGetValue(turn, out var models) && models.Count == 1 ? models.Single() : null;
         _calls.Add(key, new(key, turn, model, usage, ++_version, issue));
         _expected = payload.TryGetProperty("thread_token_usage", out var aggregate) && aggregate.ValueKind == JsonValueKind.Object
             ? UsageAmounts.Parse(aggregate) : null;
+        return true;
     }
     public UsageLedgerSnapshot Snapshot()
     {
