@@ -18,6 +18,35 @@ if ($ShortcutRoot) {
     $startup = [Environment]::GetFolderPath('Startup')
 }
 $shell = New-Object -ComObject WScript.Shell
+if (-not $ShortcutRoot) {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $taskName = 'CodexRelayUsage-Watcher-' + $identity.User.Value
+    if ($Remove) {
+        $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if ($task -and $task.Description -eq 'CodexRelayUsage startup watcher recovery') {
+            Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+        }
+    } else {
+        if (-not (Test-Path -LiteralPath $overlay)) { throw '请从 Windows 独立版目录安装。' }
+        $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if ($existingTask -and $existingTask.Description -ne 'CodexRelayUsage startup watcher recovery') {
+            throw '同名计划任务不属于本工具，已取消设置。'
+        }
+        $action = New-ScheduledTaskAction -Execute $powerShell -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $watcher + '"') -WorkingDirectory $releaseRoot
+        $triggers = @(
+            (New-ScheduledTaskTrigger -AtLogOn -User $identity.Name),
+            (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1))
+        )
+        $principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
+        $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        try {
+            Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal -Settings $settings -Description 'CodexRelayUsage startup watcher recovery' -Force | Out-Null
+        } catch {
+            throw ('未能安装后台恢复任务，自动启动设置未完成：' + $_.Exception.Message)
+        }
+    }
+}
 $entries = @(
     @{ Path = (Join-Path $desktop 'Codex.lnk'); Script = $launcher; Backup = 'desktop.lnk' },
     @{ Path = (Join-Path $programs 'Codex.lnk'); Script = $launcher; Backup = 'programs.lnk' },
@@ -61,7 +90,12 @@ if (-not $ShortcutRoot) {
             $_.CommandLine -like ('*' + $watcher + '*')
         } | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
     } elseif (-not $NoStart) {
-        Start-Process -FilePath $powerShell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $watcher + '"')) -WindowStyle Hidden
+        # Retire old package watchers before the new task acquires the singleton mutex.
+        Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object {
+            $_.CommandLine -match '-File "[^"\r\n]+[/\\]scripts[/\\]Watch-Codex\.ps1"' -and
+            $_.ProcessId -ne $PID
+        } | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
+        Start-ScheduledTask -TaskName $taskName
     }
 }
 Write-Host $(if ($Remove) { '已移除自动启动并恢复已备份的普通入口。' } else { '已设置随 Codex 启动。下次请使用桌面或开始菜单的 Codex 快捷方式。' })

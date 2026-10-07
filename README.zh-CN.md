@@ -1,4 +1,4 @@
-# Codex 会话用量悬浮工具 1.1.4
+# Codex 会话用量悬浮工具 1.1.5
 
 为使用 API 中转站模型的 Windows Codex Desktop 用户显示当前会话用量。来源始终为 **Codex 本地日志**，无需 API 密钥或 ChatGPT 登录。
 
@@ -20,7 +20,7 @@
 
 ## 启动与操作
 
-1. 先在托盘退出旧版，再解压 `CodexRelayUsage-1.1.4-win-x64.zip`，进入同名文件夹，首次正常退出 Codex，然后双击“启动 Codex 自动用量.cmd”。成品自带运行时，不必安装 .NET SDK。同一时间只允许运行一个工具实例，旧版未退出时新版不会启动。
+1. 先在托盘退出旧版，再解压 `CodexRelayUsage-1.1.5-win-x64.zip`，进入同名文件夹，首次正常退出 Codex，然后双击“启动 Codex 自动用量.cmd”。成品自带运行时，不必安装 .NET SDK。同一时间只允许运行一个工具实例，旧版未退出时新版不会启动。
 2. 打开 Codex 主窗口并选择一个对话。初始位置在顶部菜单右侧的空白区；最小化或切到其他应用时隐藏，回到 Codex 时恢复。
 3. 如需自定义位置，右击系统托盘“Codex 会话用量”图标，选择“调整位置和大小…”。拖动悬浮条，拖右下角缩放，按 Enter 或托盘“完成调整”保存，Esc 取消。保存相对窗口的位置，随后跟随窗口移动和缩放；可“重置到顶部菜单空白区”。自动定位保留左侧菜单及右侧最小化、最大化、关闭按钮区域；窗口变窄时先缩小完整悬浮条，再仅显示主指标，空间仍不足时隐藏。
 4. 点击 Token 区域向下展开，点击外部收起。正常点击不抢 Codex 输入焦点；位置编辑、会话选择器和托盘菜单属于主动操作。
@@ -33,9 +33,11 @@
 
 之后使用桌面的 **Codex**，同时启动 Codex 和用量工具，并自动携带本地会话识别参数。每次启动动态解析已安装的应用路径，适应应用更新。当前 Codex 正在运行时不会关闭或重启它；首次启用需完成工作后正常退出，再从这个普通入口打开。
 
+1.1.5 修复监视器退出后商店入口无法拉起工具的问题：使用当前用户的交互式 Windows 计划任务，在登录时启动，并每分钟检查恢复；后台任务没有默认运行时限，电池供电不会停用。正常监视时每秒检查 Codex 主窗口；若监视器被结束，恢复可能需要约一分钟。设置失败会明确报错，不再声称安装成功。后台状态保存在本机 %LOCALAPPDATA%/CodexRelayUsage/startup/watcher-status.json，便于排查。取消设置会同时移除恢复任务。
+
 监视器每秒检查 Codex 主窗口。从商店原始入口或其他途径打开 Codex 时，用量工具也会自动出现，但该入口无法自动带上本地调试参数，同名会话识别仍可能回退。已有任务栏固定入口也不会自动改写；需要全自动识别时请使用新建的普通 Codex 快捷方式。此版本不修改商店应用文件或拦截任意进程启动。
 
-托盘主动退出用量工具后，本次 Codex 运行期间监视器不会反复拉起；下次重新打开 Codex 时恢复启动。设置后请保留独立版目录，移动或升级后从新目录再次执行设置。取消时在该目录运行：
+托盘主动退出用量工具后，当前监视器不会反复拉起；下次重新打开 Codex 或监视器自身恢复后会重新启动工具。如需持续停用，请移除自动启动设置。设置后请保留独立版目录，移动或升级后从新目录再次执行设置。取消时在该目录运行：
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Install-CodexStartup.ps1 -Remove
 
@@ -101,7 +103,7 @@
 
 设置位于 `%LOCALAPPDATA%/CodexRelayUsage/settings.json`，记录位置、60%–130% 缩放、主题、字段、日志目录和锁定 ID。从 1.0.0 升级时首次将旧位置迁移到顶部，保留主题、字段、目录、锁定 ID 和缩放偏好；以后保存的手动位置会继续保留。
 
-价格独立保存在 `%LOCALAPPDATA%\CodexRelayUsage\prices.json`，使用独立配置版本和原子保存。保存失败时保留原文件并提示，界面不切换到未保存价格。1.1.4 保留已有的价格、顶部位置、向下展开、主题、字段和缩放设置。指定 `--settings` 时，测试价格文件位于该设置文件同目录。
+价格独立保存在 `%LOCALAPPDATA%\CodexRelayUsage\prices.json`，使用独立配置版本和原子保存。保存失败时保留原文件并提示，界面不切换到未保存价格。1.1.5 保留已有的价格、顶部位置、向下展开、主题、字段和缩放设置。指定 `--settings` 时，测试价格文件位于该设置文件同目录。
 
 程序不读取 API 密钥配置、不改写会话日志、不调用中转接口、不开放 HTTP 服务；读取元数据和 usage 事件，不保存正文副本。不要把真实日志或个人设置加入分享的源码包。
 
@@ -153,8 +155,8 @@
 单独验证与校验：
 
 ```powershell
-.\scripts\Verify.ps1 -ExecutablePath ".\artifacts\CodexRelayUsage-1.1.4-win-x64\CodexRelayUsage.exe"
-Get-FileHash ".\artifacts\CodexRelayUsage-1.1.4-win-x64.zip" -Algorithm SHA256
+.\scripts\Verify.ps1 -ExecutablePath ".\artifacts\CodexRelayUsage-1.1.5-win-x64\CodexRelayUsage.exe"
+Get-FileHash ".\artifacts\CodexRelayUsage-1.1.5-win-x64.zip" -Algorithm SHA256
 ```
 
 Verify 使用合成日志、费用设置窗体和 Windows 原生窗体探针，需要可创建 WinForms 窗口的 Windows 桌面，不依赖 Codex 登录或真实会话。结果为 self-test.json、cost-ui.json、feedback-ui.json、live-ui.json、native-result.json、verification.json。工具栏交互探针验证真实鼠标消息、悬停／按下画面、取消点击与动画；实时探针停止普通轮询，用生产控制器验证追加通知，并用屏幕外的合成宿主窗体验证原生移动／可见性事件、区域复用和延迟。不移动你的鼠标；延迟样本不等同于真实 Codex 跨屏拖动的端到端测量。交付检查与待实际操作的验收场景见 `ACCEPTANCE.zh-CN.md`。
