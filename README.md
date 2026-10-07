@@ -27,3 +27,7 @@
 费用只计入去重后的逐次调用；累计快照仅用于 Token 展示和完整性核对。完整估算、已知费用／部分记录、无法逐次计费、等待调用记录分别展示，缺失字段不会当作零。只统计当前线程，不自动合并子代理。上游缺失或被归一化的 usage 无法从本地日志还原，估算金额不作为中转站账单。
 
 由 [codex-token-overlay](https://github.com/soleillevant0125/codex-token-overlay) 的 MIT 代码衍生，保留原作者版权；基线和修改范围见 [UPSTREAM.md](UPSTREAM.md)。
+
+### Start alongside Codex
+
+Run the packaged startup setup once. It creates ordinary Codex desktop/Start Menu shortcuts with the local route connection flags, plus a per-user login watcher that starts the overlay when Codex opens. Existing shortcuts are backed up and can be restored with scripts/Install-CodexStartup.ps1 -Remove. It never restarts a running Codex. Store/pinned original entries also trigger the overlay watcher, but cannot supply debugging flags; use the new ordinary Codex shortcut for exact same-title identification. Keep the package directory in place; rerun setup after relocating or upgrading.

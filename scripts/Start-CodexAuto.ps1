@@ -31,10 +31,6 @@ try {
     }
     if ($running.Count -eq 0) {
         Start-Process -FilePath $codexExe -ArgumentList @('--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0') -WindowStyle Hidden
-    } else {
-        # Never silently close ongoing work from a normal shortcut invocation.
-        Add-Type -AssemblyName System.Windows.Forms
-        [Windows.Forms.MessageBox]::Show('Codex 已在运行。若自动识别尚未启用，请正常退出 Codex，再从“Codex 自动用量”入口打开。', 'Codex 自动用量') | Out-Null
     }
     Start-Process -FilePath $overlay -WorkingDirectory $releaseRoot -WindowStyle Hidden
 } catch {

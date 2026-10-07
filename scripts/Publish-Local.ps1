@@ -28,10 +28,11 @@ foreach ($name in @("README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-
 }
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party") -Destination $binaryDirectory -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $binaryDirectory "scripts") -Force | Out-Null
-foreach ($launcher in @("Start-CodexAuto.ps1", "Start-CodexAuto.cmd")) {
+foreach ($launcher in @("Start-CodexAuto.ps1", "Start-CodexAuto.cmd", "Install-CodexStartup.ps1", "Watch-Codex.ps1")) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $launcher) -Destination (Join-Path $binaryDirectory "scripts") -Force
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Launch-Package.cmd") -Destination (Join-Path $binaryDirectory "启动 Codex 自动用量.cmd") -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Install-Startup-Package.cmd") -Destination (Join-Path $binaryDirectory "设置随 Codex 启动.cmd") -Force
 $previewDirectory = Join-Path $repositoryRoot "previews"
 $previewProcess = Start-Process -FilePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -ArgumentList @("--render-preview", ('"' + $previewDirectory + '"')) -WindowStyle Hidden -PassThru -Wait
 if ($previewProcess.ExitCode -ne 0) { throw "生成预览失败。" }
