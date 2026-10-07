@@ -92,11 +92,11 @@ internal static class SessionCostTests
         check("explicit full alias binding shares scheme", new SessionCostCalculator().Calculate(Single(model: "other/test").Snapshot(), Prices(alias)).Amounts == r.Amounts);
         check("prefix is retained and never inferred", new SessionCostCalculator().Calculate(Single(model: "test").Snapshot(), Prices(alias)).Amounts is null);
         check("model matching is case sensitive", new SessionCostCalculator().Calculate(Single(model: "Relay/test").Snapshot(), Prices(alias)).Amounts is null);
-        check("compact cost four decimal places", CostFormatting.Money(.06725985m, true) == "$0.0673");
-        check("detailed cost eight decimal places", CostFormatting.Money(.06725985m) == "$0.06725985");
-        check("small compact positive not displayed as zero", CostFormatting.Money(.000000001m, true) == "<$0.0001");
-        check("small detail positive not displayed as zero", CostFormatting.Money(.000000001m) == "<$0.00000001");
-        check("actual zero displayed as zero", CostFormatting.Money(0m, true) == "$0.0000");
+        check("compact cost three decimal places", CostFormatting.Money(.06725985m, true) == "$0.067");
+        check("detailed cost three decimal places", CostFormatting.Money(.06725985m) == "$0.067");
+        check("small compact positive not displayed as zero", CostFormatting.Money(.000000001m, true) == "<$0.001");
+        check("small detail positive not displayed as zero", CostFormatting.Money(.000000001m) == "<$0.001");
+        check("actual zero displayed as zero", CostFormatting.Money(0m, true) == "$0.000");
         using var canceled = new CancellationTokenSource(); canceled.Cancel(); var canceledCorrectly = false;
         try { calculator.Calculate(ledger.Snapshot(), prices, canceled.Token); } catch (OperationCanceledException) { canceledCorrectly = true; }
         check("cost computation honors cancellation", canceledCorrectly);
@@ -169,7 +169,7 @@ internal static class SessionCostTests
         var r = calculator.Calculate(snapshot.Ledger!, prices);
         check("modern records parsed by actual reader", r.Amounts?.Total == .06725985m);
         var modernPresentation = OverlayPresentationBuilder.Create(snapshot, DisplayField.Total, DisplayField.Cost, DisplayField.Cost, r);
-        check("modern tokens and fee visible before cumulative token snapshot arrives", snapshot.UsageRecorded && snapshot.TotalTokens == 97_603 && modernPresentation.StatusText is null && modernPresentation.Secondary.Value == "估算 $0.0673");
+        check("modern tokens and fee visible before cumulative token snapshot arrives", snapshot.UsageRecorded && snapshot.TotalTokens == 97_603 && modernPresentation.StatusText is null && modernPresentation.Secondary.Value == "估算 $0.067");
         var legacy = Row("event_msg", new { type = "token_count", info = new { total_token_usage = Usage(SampleUsage) } });
         File.AppendAllText(path, legacy + legacy, encoding); snapshot = monitor.Poll(true)!;
         check("cumulative snapshots display tokens without extra fees", snapshot.TotalTokens == 97_603 && calculator.Calculate(snapshot.Ledger!, prices).Amounts?.Total == .06725985m);
@@ -224,7 +224,7 @@ internal static class SessionCostTests
         check("cost display field and compact selection persist", restored.VisibleFields.HasFlag(DisplayField.Cost) && restored.CollapsedSecondaryField == DisplayField.Cost);
         var r = SampleResult(); var shown = OverlayPresentationBuilder.Create(DiagnosticsRunner.Example(), DisplayField.Total, DisplayField.Cost, DisplayField.Cost, r);
         check("expanded cost includes four components", shown.ExpandedRows.Count == 5 && shown.Secondary.HasValue && shown.EstimateText is not null && shown.IssueText is null);
-        check("compact cost does not repeat label", OverlayPresentationBuilder.CompactText(shown.Secondary) == "估算 $0.0673");
+        check("compact cost does not repeat label", OverlayPresentationBuilder.CompactText(shown.Secondary) == "估算 $0.067");
         var hidden = OverlayPresentationBuilder.Create(DiagnosticsRunner.Example(), DisplayField.Total, DisplayField.CacheHitRate, DisplayField.Output, r);
         check("hiding cost field also hides its four components", hidden.ExpandedRows.All(row => row.Field != DisplayField.Cost));
         var unavailable = OverlayPresentationBuilder.Create(DiagnosticsRunner.Example(), DisplayField.Cost, DisplayField.Total, DisplayField.Cost,

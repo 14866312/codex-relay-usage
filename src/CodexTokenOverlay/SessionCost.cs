@@ -124,9 +124,8 @@ internal static class CostFormatting
 {
     public static string Money(decimal value, bool compact = false)
     {
-        var smallest = compact ? 0.0001m : 0.00000001m;
-        if (value > 0 && value < smallest) return compact ? "<$0.0001" : "<$0.00000001";
-        return "$" + value.ToString(compact ? "0.0000" : "0.00000000", CultureInfo.InvariantCulture);
+        if (value > 0 && value < 0.001m) return "<$0.001";
+        return "$" + value.ToString("0.000", CultureInfo.InvariantCulture);
     }
     public static string Summary(SessionCostResult? result, bool compact) => result?.Amounts is { } a
         ? result.Label + " " + Money(a.Total, compact) + (result.Status == SessionCostStatus.Partial && !compact ? "（部分记录）" : "")

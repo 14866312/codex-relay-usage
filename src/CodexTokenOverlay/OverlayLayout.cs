@@ -81,7 +81,7 @@ internal static class OverlayLayoutCalculator
     private const int TitleLeftReserveDip = 360;
     private const int FallbackCaptionHeightDip = 34;
     private const int FallbackCaptionButtonWidthDip = 46;
-    private const int PanelChromeHeightDip = 148;
+    private const int PanelChromeHeightDip = 68;
     private const int NormalRowHeightDip = 32;
     private const int MinimumRowHeightDip = 24;
 

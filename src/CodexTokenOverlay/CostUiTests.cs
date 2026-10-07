@@ -50,7 +50,7 @@ internal static class CostUiTests
             var result = SessionCostTests.SampleResult(); details.SetResult(result.ThreadId, result);
             var groups = Find<DataGridView>(details, "CostGroups"); var unpriced = Find<DataGridView>(details, "UnpricedCalls");
             Check("details window displays model group and exact amount", groups.Rows.Count == 1 &&
-                groups.Rows[0].Cells[8].Value?.ToString() == "$0.06725985");
+                groups.Rows[0].Cells[8].Value?.ToString() == "$0.067");
             Check("details summary names current pricing basis", Find<TextBox>(details, "CostNotes").Text.Contains("按当前配置"));
             var bad = result with { Status = SessionCostStatus.Partial, Amounts = null, PricedCalls = 0, Groups = Array.Empty<CostGroup>(),
                 Unpriced = new[] { new EvaluatedCall(new(new("session", "unpriced"), "turn", "relay/unknown", SessionCostTests.SampleUsage, 1), null, "—", null, "模型未配置价格") } };
