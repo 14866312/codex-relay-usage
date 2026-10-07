@@ -246,6 +246,7 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
         var projects = new LocalProjectIndex();
         var resolver = new SidebarSessionResolver();
         using var sidebar = new CodexSidebarAccessibility();
+        using var debugRoute = new CodexDebugRouteReader();
         long observedRoot = -1;
         try
         {
@@ -256,6 +257,23 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                 CodexViewIdentity? observedView = null;
                 try
                 {
+                    var exact = debugRoute.Read(_cancellation.Token);
+                    if (exact is not null)
+                    {
+                        lock (_sync)
+                        {
+                            if (rootRevision == _rootRevision)
+                            {
+                                _view = null;
+                                _lastReadTimestamp = Stopwatch.GetTimestamp();
+                                _status = Advance(_status, exact);
+                                _bindingRequest?.Completion.TrySetResult("已启用页面唯一 ID 自动识别，无需绑定");
+                                _bindingRequest = null;
+                            }
+                        }
+                        _wake.WaitOne(100);
+                        continue;
+                    }
                     index.SetRoot(root); index.Refresh(_cancellation.Token);
                     projects.SetRoot(root); projects.Refresh();
                     if (observedRoot != rootRevision) { resolver.Reset(); sidebar.Reset(); observedRoot = rootRevision; }

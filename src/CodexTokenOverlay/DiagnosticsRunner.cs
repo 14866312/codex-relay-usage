@@ -10,6 +10,15 @@ internal static class DiagnosticsRunner
     public static bool TryRun(IReadOnlyList<string> args, string root)
     {
         if (args.Count < 2) return false;
+        if (args[0] == "--debug-route-probe" && args.Count > 2 && int.TryParse(args[2], out var processId))
+        {
+            using var reader = new CodexDebugRouteReader();
+            using var process = System.Diagnostics.Process.GetProcessById(processId);
+            var result = reader.ReadProcess(processId, $"probe/{processId}/{process.StartTime.Ticks}", default);
+            File.WriteAllText(args[1], JsonSerializer.Serialize(result, JsonOptions));
+            Environment.ExitCode = result is { IsConnected: true } ? 0 : 1;
+            return true;
+        }
         if (args[0] == "--live-ui-probe")
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); Application.EnableVisualStyles();
@@ -201,6 +210,7 @@ internal static class DiagnosticsRunner
             TitleBarPlacementTests.Run(Check, directory);
             ConversationSwitchTests.Run(Check, directory);
             SidebarIdentificationTests.Run(Check, directory);
+            DebugRouteTests.Run(Check);
             SessionCostTests.Run(Check, directory);
             LiveUsageTests.Run(Check, directory);
             foreach (var dpi in new uint[] { 96, 120, 144, 192 })
