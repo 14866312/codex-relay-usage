@@ -51,6 +51,9 @@ internal sealed class OverlayContext : ApplicationContext
     private int _hostDiscoveryQueued;
     private long _logChangeVersion;
     private long _nextHostValidation;
+    private long _nextBackgroundPoll;
+    private (TokenSnapshot? Snapshot, SessionCostResult? Cost, ActiveThreadRouteStatus Route, string? ManualId,
+        string? Error, DisplayField Primary, DisplayField Secondary, DisplayField Visible)? _presentedState;
     private string? _pendingThreadId => _selection.ThreadId;
     private ActiveThreadRouteStatus _pendingRouteStatus = new(null, 0, false, 0, null);
     private string? _manualThreadId;
@@ -188,6 +191,13 @@ internal sealed class OverlayContext : ApplicationContext
         };
         menu.Items.Add(_visibilityMenuItem);
 
+        var startupItem = new ToolStripMenuItem("设置开机自动启动…");
+        startupItem.Click += (_, _) => StartStartupSettings("--install-startup");
+        menu.Items.Add(startupItem);
+        var removeStartupItem = new ToolStripMenuItem("取消开机自动启动");
+        removeStartupItem.Click += (_, _) => StartStartupSettings("--remove-startup");
+        menu.Items.Add(removeStartupItem);
+
         var exitItem = new ToolStripMenuItem("退出");
         exitItem.Click += (_, _) => ExitOverlay();
         menu.Items.Add(exitItem);
@@ -222,7 +232,39 @@ internal sealed class OverlayContext : ApplicationContext
         _ = _form.Handle;
         _windowEvents = new NativeWindowEvents(HandleHostWindowEvent);
         _monitor.DataChanged += HandleLogChanged;
+        _routeMonitor.StatusChanged += QueueTick;
         _timer.Start();
+    }
+
+    private void StartStartupSettings(string mode)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = Path.Combine(AppContext.BaseDirectory, "CodexRelayUsage.exe"),
+                Arguments = mode, UseShellExecute = false, CreateNoWindow = true,
+                WorkingDirectory = AppContext.BaseDirectory
+            });
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            MessageBox.Show(error.Message, "自动启动设置失败");
+        }
+    }
+
+    private void QueueTick()
+    {
+        if (Volatile.Read(ref _disposed) != 0 || Interlocked.Exchange(ref _hostDiscoveryQueued, 1) != 0) return;
+        try
+        {
+            _form.BeginInvoke((Action)(() =>
+            {
+                Interlocked.Exchange(ref _hostDiscoveryQueued, 0);
+                if (Volatile.Read(ref _disposed) == 0) Tick();
+            }));
+        }
+        catch (InvalidOperationException) { Interlocked.Exchange(ref _hostDiscoveryQueued, 0); }
     }
 
     private void HandleLogChanged()
@@ -262,13 +304,10 @@ internal sealed class OverlayContext : ApplicationContext
         if (change == HostWindowEvent.MoveStarted) _hostMoveTimer.Start();
         if (change == HostWindowEvent.MoveEnded) _hostMoveTimer.Stop();
         RefreshHostGeometry();
-        if (change == HostWindowEvent.Foreground && !_manualAttachment.IsEditing
-            && Interlocked.Exchange(ref _hostDiscoveryQueued, 1) == 0)
+        if (change == HostWindowEvent.Foreground && !_manualAttachment.IsEditing)
         {
-            _form.BeginInvoke((Action)(() =>
-            {
-                Interlocked.Exchange(ref _hostDiscoveryQueued, 0); Tick();
-            }));
+            _routeMonitor.Wake();
+            QueueTick();
         }
     }
 
@@ -418,11 +457,13 @@ internal sealed class OverlayContext : ApplicationContext
         }
 
         var activeThreadChanged = ObserveSelection();
+        _timer.Interval = _pendingRouteStatus.ActiveWindowCount == 0 && _manualThreadId is null ? 1000 : 150;
         _pinSessionMenuItem.Enabled = _pendingThreadId is not null;
         RefreshPresentation();
         UpdateSessionMenuText();
         RefreshTrayText();
-        RequestBackgroundPoll();
+        if (activeThreadChanged || _queuedRoot is not null || Environment.TickCount64 >= _nextBackgroundPoll)
+            RequestBackgroundPoll();
 
         if (_manualAttachment.IsEditing)
         {
@@ -477,6 +518,7 @@ internal sealed class OverlayContext : ApplicationContext
         }
 
         var uiScheduler = TaskScheduler.FromCurrentSynchronizationContext();
+        _nextBackgroundPoll = Environment.TickCount64 + 1_000;
         var request = _selection.Request();
         var prices = _prices;
         var manualId = _manualThreadId;
@@ -538,8 +580,12 @@ internal sealed class OverlayContext : ApplicationContext
         return true;
     }
 
-    private void RefreshTrayText() => _trayIcon.Text = _lastSnapshot is null ? "Codex 会话用量 · 等待当前会话" :
-        TrimTrayText($"Codex {OverlayPresentationBuilder.ShortThreadId(_lastSnapshot.ThreadId)} · {OverlayPresentationBuilder.FormatTokenCount(_lastSnapshot.EffectiveTotalTokens)} tok");
+    private void RefreshTrayText()
+    {
+        var text = _lastSnapshot is null ? "Codex 会话用量 · 等待当前会话" :
+            TrimTrayText($"Codex {OverlayPresentationBuilder.ShortThreadId(_lastSnapshot.ThreadId)} · {OverlayPresentationBuilder.FormatTokenCount(_lastSnapshot.EffectiveTotalTokens)} tok");
+        if (_trayIcon.Text != text) _trayIcon.Text = text;
+    }
 
     internal ConversationProbeSample ReadConversationProbeSample() => new(DateTime.UtcNow,
         _pendingRouteStatus, _selection.Revision, _selection.ThreadId, _lastSnapshot?.ThreadId,
@@ -557,6 +603,10 @@ internal sealed class OverlayContext : ApplicationContext
 
     private void RefreshPresentation()
     {
+        var state = (_lastSnapshot, _cost, _pendingRouteStatus, _manualThreadId, _pendingError,
+            _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField, _settings.VisibleFields);
+        if (_presentedState == state) return;
+        _presentedState = state;
         var following = FollowSelection.Status(_pendingRouteStatus, _manualThreadId);
         var waiting = _pendingThreadId is null ? following : $"等待会话 {OverlayPresentationBuilder.ShortThreadId(_pendingThreadId)} 的用量";
         _presentation = _lastSnapshot is null
@@ -1176,6 +1226,7 @@ internal sealed class OverlayContext : ApplicationContext
             _hostMoveTimer.Dispose();
             _windowEvents.Dispose();
             _monitor.DataChanged -= HandleLogChanged;
+            _routeMonitor.StatusChanged -= QueueTick;
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
             _readCancellation?.Cancel();

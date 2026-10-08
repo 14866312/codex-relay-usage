@@ -34,6 +34,16 @@ function Invoke-Probe {
 }
 
 & (Join-Path $PSScriptRoot "Test-PeArchitecture.ps1") -ExecutablePath $executable -Architecture x64
+$packageRoot = Split-Path -Parent $executable
+$startupPath = Join-Path $outputRoot "startup.json"
+$consolePath = Join-Path $outputRoot "console-free.json"
+$windowsPowerShell = Join-Path $env:SystemRoot "System32/WindowsPowerShell/v1.0/powershell.exe"
+& $windowsPowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Test-CodexStartup.ps1") -FixtureRoot $packageRoot -OutputPath $startupPath
+if ($LASTEXITCODE -ne 0) { throw "开机启动迁移检查失败。" }
+& $windowsPowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Test-ConsoleFreeStartup.ps1") -PackageRoot $packageRoot -OutputPath $consolePath
+if ($LASTEXITCODE -ne 0) { throw "无控制台入口检查失败。" }
+$startup = Get-Content -LiteralPath $startupPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$console = Get-Content -LiteralPath $consolePath -Raw -Encoding UTF8 | ConvertFrom-Json
 $selfTestPath = Join-Path $outputRoot "self-test.json"
 Invoke-Probe -Arguments @("--self-test", $selfTestPath)
 $selfTest = Get-Content -LiteralPath $selfTestPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -85,6 +95,8 @@ Check "attachment highlight clears after editing" ($c.HighlightHiddenAfterClear 
 $failed = @($checks | Where-Object { -not $_.Passed }).Count
 $summary = [pscustomobject]@{
     SyntheticPassed = $selfTest.Passed
+    StartupPassed = $startup.Passed
+    ConsoleFreePassed = $console.Passed
     SyntheticFailed = $selfTest.Failed
     NativePassed = $checks.Count - $failed
     NativeFailed = $failed
@@ -101,4 +113,4 @@ $summary = [pscustomobject]@{
 }
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outputRoot "verification.json") -Encoding UTF8
 if ($failed -gt 0) { throw "原生窗口测试失败，请查看 $outputRoot" }
-Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、$($costUi.Passed) 项费用窗口检查、$($feedbackUi.Passed) 项工具栏交互检查、$($liveUi.Passed) 项实时更新及跟随检查、x64 PE。"
+Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、$($costUi.Passed) 项费用窗口检查、$($feedbackUi.Passed) 项工具栏交互检查、$($liveUi.Passed) 项实时更新及跟随检查、$($startup.Passed) 项启动设置检查、$($console.Passed) 项无控制台检查、x64 GUI PE。"

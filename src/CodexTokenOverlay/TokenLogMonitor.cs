@@ -196,6 +196,8 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
 {
     private const int MaxLineBytes = 32 * 1024 * 1024;
     private long _offset, _knownLength;
+    private long _snapshotOffset = -1;
+    private byte[]? _buffer;
     private readonly MemoryStream _partial = new();
     private readonly HashSet<string> _turns = new(StringComparer.Ordinal);
     private readonly HashSet<string> _runningTurns = new(StringComparer.Ordinal);
@@ -221,7 +223,8 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
         stream.Position = _offset;
         // Persist the fingerprint at open so a cancelled read can resume even when it ended at EOF.
         _writeUtc = info.LastWriteTimeUtc; _creationUtc = info.CreationTimeUtc; _knownLength = stream.Length;
-        var buffer = new byte[64 * 1024];
+        if (_offset == stream.Length && _snapshotOffset == _offset && Snapshot is not null) return Snapshot;
+        var buffer = _buffer ??= new byte[64 * 1024];
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -251,6 +254,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
             issues.Length == 0 ? live?.ParseIssue : string.Join("；", issues), _usageRecorded || live is not null,
             live is null ? _totalTokenInvalid : live.ParseIssue?.Contains("total_tokens", StringComparison.Ordinal) == true, ledger,
             _runningTurns.Count > 0, _liveUsage.Source);
+        _snapshotOffset = _offset;
         return Snapshot;
     }
     private void Append(ReadOnlySpan<byte> bytes)
@@ -262,6 +266,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
     private void Reset()
     {
         _offset = _knownLength = 0; _partial.SetLength(0); _turns.Clear(); _skipLine = false; _usageRecorded = false; _totalTokenInvalid = false;
+        _snapshotOffset = -1;
         _total = _input = _cache = _output = _reasoning = _contextUsed = _contextWindow = null;
         _model = _parseIssue = null; _updatedUtc = default; Snapshot = null;
         _ledger = new(threadId);

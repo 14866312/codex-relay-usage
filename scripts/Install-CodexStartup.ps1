@@ -3,11 +3,10 @@ $ErrorActionPreference = 'Stop'
 $releaseRoot = Split-Path -Parent $PSScriptRoot
 $overlay = Join-Path $releaseRoot 'CodexRelayUsage.exe'
 $powerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
-$launcher = Join-Path $PSScriptRoot 'Start-CodexAuto.ps1'
-$watcher = Join-Path $PSScriptRoot 'Watch-Codex.ps1'
 $stateRoot = Join-Path $env:LOCALAPPDATA 'CodexRelayUsage/startup'
+if (-not $Remove -and -not (Test-Path -LiteralPath $overlay)) { throw '请从 Windows 独立版目录安装。' }
 if ($ShortcutRoot) {
-    # Isolated directory for installer verification; never used by normal installation.
+    # Isolated installer fixture; never changes real tasks, processes or shortcuts.
     $desktop = Join-Path $ShortcutRoot 'Desktop'
     $programs = Join-Path $ShortcutRoot 'Programs'
     $startup = Join-Path $ShortcutRoot 'Startup'
@@ -16,59 +15,58 @@ if ($ShortcutRoot) {
     $desktop = [Environment]::GetFolderPath('Desktop')
     $programs = [Environment]::GetFolderPath('Programs')
     $startup = [Environment]::GetFolderPath('Startup')
-}
-$shell = New-Object -ComObject WScript.Shell
-if (-not $ShortcutRoot) {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $taskName = 'CodexRelayUsage-Watcher-' + $identity.User.Value
-    if ($Remove) {
-        $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-        if ($task -and $task.Description -eq 'CodexRelayUsage startup watcher recovery') {
-            Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    # Migrate the old login/minute watcher. No replacement task is needed.
+    $taskName = 'CodexRelayUsage-Watcher-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($task -and $task.Description -eq 'CodexRelayUsage startup watcher recovery') {
+        Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' or Name='CodexRelayUsage.exe'")
+    foreach ($process in $processes) {
+        if ($process.ProcessId -eq $PID) { continue }
+        $oldWatcher = $false
+        if ($process.Name -eq 'powershell.exe' -and $process.CommandLine -match '-File\s+(?:"(?<script>[^"\r\n]+[/\\]scripts[/\\]Watch-Codex\.ps1)"|(?<script>\S+[/\\]scripts[/\\]Watch-Codex\.ps1))(?=\s|$)') {
+            $oldRoot = Split-Path -Parent (Split-Path -Parent $Matches.script)
+            $oldWatcher = Test-Path -LiteralPath (Join-Path $oldRoot 'CodexRelayUsage.exe')
+        } elseif ($process.Name -eq 'CodexRelayUsage.exe' -and $process.CommandLine -match '(?:^|\s)--watch-codex(?:\s|$)' -and $process.ExecutablePath) {
+            # New versions accept this legacy flag as a real overlay; leave those alone.
+            $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($process.ExecutablePath)
+            $installedVersion = [Version]::new($version.FileMajorPart, $version.FileMinorPart, $version.FileBuildPart, $version.FilePrivatePart)
+            $oldWatcher = $installedVersion -lt [Version]'1.1.8.0'
         }
-    } else {
-        if (-not (Test-Path -LiteralPath $overlay)) { throw '请从 Windows 独立版目录安装。' }
-        $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-        if ($existingTask -and $existingTask.Description -ne 'CodexRelayUsage startup watcher recovery') {
-            throw '同名计划任务不属于本工具，已取消设置。'
-        }
-        $action = New-ScheduledTaskAction -Execute $overlay -Argument '--watch-codex' -WorkingDirectory $releaseRoot
-        $triggers = @(
-            (New-ScheduledTaskTrigger -AtLogOn -User $identity.Name),
-            (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1))
-        )
-        $principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
-        $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        try {
-            Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal -Settings $settings -Description 'CodexRelayUsage startup watcher recovery' -Force | Out-Null
-        } catch {
-            throw ('未能安装后台恢复任务，自动启动设置未完成：' + $_.Exception.Message)
-        }
+        if ($oldWatcher) { Stop-Process -Id $process.ProcessId -ErrorAction SilentlyContinue }
     }
 }
+$shell = New-Object -ComObject WScript.Shell
+$legacyDescription = 'Codex 与会话用量自动启动'
+$loginDescription = 'Codex 会话用量：登录 Windows 自动启动'
 $entries = @(
-    @{ Path = (Join-Path $desktop 'Codex.lnk'); Script = $launcher; Backup = 'desktop.lnk' },
-    @{ Path = (Join-Path $programs 'Codex.lnk'); Script = $launcher; Backup = 'programs.lnk' },
-    @{ Path = (Join-Path $startup 'Codex 用量自动启动.lnk'); Script = $watcher; Backup = 'startup.lnk' }
+    @{ Path = (Join-Path $desktop 'Codex.lnk'); Arguments = '--launch-codex'; Backup = 'desktop.lnk'; Description = $legacyDescription },
+    @{ Path = (Join-Path $programs 'Codex.lnk'); Arguments = '--launch-codex'; Backup = 'programs.lnk'; Description = $legacyDescription },
+    @{ Path = (Join-Path $startup 'Codex 用量自动启动.lnk'); Arguments = ''; Backup = 'startup.lnk'; Description = $loginDescription }
 )
+$package = if (-not $Remove) { Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1 }
 foreach ($entry in $entries) {
     $backup = Join-Path $stateRoot $entry.Backup
-    $link = $null
-    if (Test-Path -LiteralPath $entry.Path) { $link = $shell.CreateShortcut($entry.Path) }
-    $isOurs = $link -and ($link.TargetPath -eq $powerShell -or [IO.Path]::GetFileName($link.TargetPath) -eq 'CodexRelayUsage.exe') -and
-        $link.Description -eq 'Codex 与会话用量自动启动' -and
-        ($link.Arguments -match '(Start-CodexAuto|Watch-Codex)\.ps1"$' -or $link.Arguments -in @('--launch-codex','--watch-codex'))
+    $link = if (Test-Path -LiteralPath $entry.Path) { $shell.CreateShortcut($entry.Path) } else { $null }
+    $isOurs = $false
+    if ($link -and $link.Description -in @($legacyDescription, $loginDescription)) {
+        $isNative = [IO.Path]::GetFileName($link.TargetPath) -eq 'CodexRelayUsage.exe' -and
+            ($link.Arguments -in @('--launch-codex', '--watch-codex') -or
+             ($entry.Arguments -eq '' -and $link.Arguments -eq '' -and $link.Description -eq $loginDescription))
+        # Accept both quoted and unquoted -File arguments from older releases.
+        $isLegacyScript = $link.TargetPath -eq $powerShell -and $link.Description -eq $legacyDescription -and
+            $link.Arguments -match '(?:Start-CodexAuto|Watch-Codex)\.ps1"?\s*$'
+        $isOurs = $isNative -or $isLegacyScript
+    }
     if ($Remove) {
         if ($isOurs) {
             Remove-Item -LiteralPath $entry.Path
-            if (Test-Path -LiteralPath $backup) {
-                Move-Item -LiteralPath $backup -Destination $entry.Path
-            }
+            if (Test-Path -LiteralPath $backup) { Move-Item -LiteralPath $backup -Destination $entry.Path }
         }
         continue
     }
-    if (-not (Test-Path -LiteralPath $overlay)) { throw '请从 Windows 独立版目录安装。' }
     New-Item -ItemType Directory -Path (Split-Path -Parent $entry.Path), $stateRoot -Force | Out-Null
     if ($link -and -not $isOurs) {
         if (Test-Path -LiteralPath $backup) { throw '存在旧快捷方式备份，请先还原或保留当前入口。' }
@@ -76,26 +74,13 @@ foreach ($entry in $entries) {
     }
     $link = $shell.CreateShortcut($entry.Path)
     $link.TargetPath = $overlay
-    $link.Arguments = if ($entry.Script -eq $watcher) { '--watch-codex' } else { '--launch-codex' }
+    $link.Arguments = $entry.Arguments
     $link.WorkingDirectory = $releaseRoot
-    $link.Description = 'Codex 与会话用量自动启动'
-    $package = Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1
-    if ($package) { $link.IconLocation = (Join-Path $package.InstallLocation 'app/ChatGPT.exe') }
-    else { $link.IconLocation = $overlay }
+    $link.Description = $entry.Description
+    $link.IconLocation = if ($entry.Arguments -and $package) { Join-Path $package.InstallLocation 'app/ChatGPT.exe' } else { $overlay }
     $link.Save()
 }
-if (-not $ShortcutRoot) {
-    if ($Remove) {
-        Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object {
-            $_.CommandLine -like ('*' + $watcher + '*')
-        } | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
-    } elseif (-not $NoStart) {
-        # Retire old package watchers before the new task acquires the singleton mutex.
-        Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object {
-            $_.CommandLine -match '-File "[^"\r\n]+[/\\]scripts[/\\]Watch-Codex\.ps1"' -and
-            $_.ProcessId -ne $PID
-        } | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
-        Start-ScheduledTask -TaskName $taskName
-    }
+if (-not $ShortcutRoot -and -not $Remove -and -not $NoStart) {
+    Start-Process -FilePath $overlay -WorkingDirectory $releaseRoot -WindowStyle Hidden
 }
-Write-Host $(if ($Remove) { '已移除自动启动并恢复已备份的普通入口。' } else { '已设置随 Codex 启动。下次请使用桌面或开始菜单的 Codex 快捷方式。' })
+Write-Host $(if ($Remove) { '已取消开机自动启动并恢复已备份的普通入口。' } else { '已设置登录 Windows 后直接启动工具；Codex 打开后悬浮条自动出现。' })

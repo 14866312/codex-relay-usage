@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$ExecutablePath,
     [Parameter(Mandatory = $true)]
@@ -50,7 +50,9 @@ try {
             $resolvedExecutable)
     }
 
-    Write-Host ("PE 架构检查通过：{0} (0x{1:X4})" -f $Architecture, $actualMachine)
+    $stream.Position = $peOffset + 24 + 68
+    if ($reader.ReadUInt16() -ne 2) { throw "程序必须使用 Windows GUI 子系统，不能自动创建控制台。" }
+    Write-Host ("PE 架构与 GUI 子系统检查通过：{0} (0x{1:X4})" -f $Architecture, $actualMachine)
 }
 finally {
     $reader.Dispose()

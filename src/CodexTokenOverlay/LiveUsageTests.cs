@@ -30,6 +30,10 @@ internal static class LiveUsageTests
         void Append(string row) => File.AppendAllText(path, row, utf8);
         Append(Record("one", U(100), U(100)));
         var first = reader.Read()!;
+        var bytesRead = reader.TotalBytesRead;
+        for (var unchanged = 0; unchanged < 20; unchanged++) reader.Read();
+        check("unchanged polling reuses published snapshot and reads no log bytes",
+            ReferenceEquals(first, reader.Read()) && reader.TotalBytesRead == bytesRead);
         check("first call advances tokens before task completion or legacy snapshot", first.TotalTokens == 110 && first.TurnInProgress && first.UsageSource == "逐次线程累计");
         check("latest call supplies context estimate immediately", first.ContextUsedTokens == 110 && first.ContextWindowTokens is null);
         p = OverlayPresentationBuilder.Create(first, DisplayField.Total, DisplayField.CacheHitRate, DisplayField.Total);
@@ -106,5 +110,21 @@ internal static class LiveUsageTests
         check("legacy-only token display remains compatible", reader.Read()!.TotalTokens == 110 && !reader.Read()!.TurnInProgress);
         File.WriteAllText(path, Meta + Started + Context, utf8);
         check("truncation clears live accumulator and starts clean", reader.Read()!.TotalTokens is null && reader.Read()!.TurnInProgress && reader.Read()!.Ledger!.Calls.Count == 0);
+
+        var rewrite = Meta + Legacy(U(100));
+        File.WriteAllText(path, rewrite, utf8);
+        reader = new(path, "live"); var beforeRewrite = reader.Read()!;
+        var originalTime = File.GetLastWriteTimeUtc(path);
+        File.WriteAllText(path, Meta + Legacy(U(200)), utf8);
+        File.SetLastWriteTimeUtc(path, originalTime.AddSeconds(1));
+        var afterRewrite = reader.Read()!;
+        check("equal-length rewrite invalidates unchanged snapshot cache",
+            new FileInfo(path).Length == Encoding.UTF8.GetByteCount(rewrite) &&
+            afterRewrite.TotalTokens == 210 && !ReferenceEquals(beforeRewrite, afterRewrite));
+        Append(Legacy(U(300)));
+        using var cancelled = new CancellationTokenSource();
+        try { reader.Read(cancelled.Token, cancelled.Cancel); } catch (OperationCanceledException) { }
+        check("cancelled EOF read cannot return a previously cached snapshot",
+            reader.ReadOffset == new FileInfo(path).Length && reader.Read()!.TotalTokens == 310);
     }
 }

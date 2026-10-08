@@ -175,6 +175,7 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
     private BindingRequest? _bindingRequest;
     private long _lastReadTimestamp = Stopwatch.GetTimestamp();
     private int _disposed;
+    public event Action? StatusChanged;
 
     public CodexVisibleThreadMonitor(string root)
     {
@@ -188,11 +189,16 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
         lock (_sync)
         {
             // A blocked renderer must not leave the previous conversation visible indefinitely.
-            if (Stopwatch.GetElapsedTime(_lastReadTimestamp) > TimeSpan.FromSeconds(1) &&
+            if (_status.ActiveWindowCount > 0 && Stopwatch.GetElapsedTime(_lastReadTimestamp) > TimeSpan.FromSeconds(1) &&
                 (_status.ThreadId is not null || _status.LastError != "当前页面读取超时"))
                 _status = _status with { ThreadId = null, LastError = "当前页面读取超时", Version = _status.Version + 1 };
             return _status;
         }
+    }
+    public void Wake()
+    {
+        lock (_sync)
+            if (_disposed == 0) _wake.Set();
     }
     public void SetRoot(string root)
     {
@@ -260,18 +266,22 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                     var exact = debugRoute.Read(_cancellation.Token);
                     if (exact is not null)
                     {
+                        var changed = false;
                         lock (_sync)
                         {
                             if (rootRevision == _rootRevision)
                             {
                                 _view = null;
                                 _lastReadTimestamp = Stopwatch.GetTimestamp();
-                                _status = Advance(_status, exact);
+                                var previous = _status;
+                                _status = Advance(previous, exact);
+                                changed = _status.Version != previous.Version;
                                 _bindingRequest?.Completion.TrySetResult("已启用页面唯一 ID 自动识别，无需绑定");
                                 _bindingRequest = null;
                             }
                         }
-                        _wake.WaitOne(100);
+                        if (changed) StatusChanged?.Invoke();
+                        _wake.WaitOne(exact.ActiveWindowCount == 0 ? 1000 : 100);
                         continue;
                     }
                     index.SetRoot(root); index.Refresh(_cancellation.Token);
@@ -301,6 +311,7 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                 {
                     next = new(null, 0, _ipc.GetStatus().IsConnected, 0, "当前页面暂时无法读取");
                 }
+                var statusChanged = false;
                 lock (_sync)
                 {
                     // A directory change that raced the accessibility read must not restore an old identity.
@@ -308,10 +319,13 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                     {
                         _view = observedView;
                         _lastReadTimestamp = Stopwatch.GetTimestamp();
-                        _status = Advance(_status, next);
+                        var previous = _status;
+                        _status = Advance(previous, next);
+                        statusChanged = _status.Version != previous.Version;
                     }
                 }
-                _wake.WaitOne(150);
+                if (statusChanged) StatusChanged?.Invoke();
+                _wake.WaitOne(next.ActiveWindowCount == 0 ? 1000 : 150);
             }
         }
         catch (OperationCanceledException) when (_cancellation.IsCancellationRequested) { }

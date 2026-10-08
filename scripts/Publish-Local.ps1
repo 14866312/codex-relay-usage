@@ -21,18 +21,18 @@ try {
     & $DotnetPath publish $projectPath -c Release -r win-x64 --self-contained true -o $binaryDirectory --nologo
     if ($LASTEXITCODE -ne 0) { throw "发布构建失败。" }
 } finally { Pop-Location }
-& (Join-Path $PSScriptRoot "Verify.ps1") -ExecutablePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -OutputDirectory (Join-Path $binaryDirectory "verification")
 
 foreach ($name in @("README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-CN.md", "CHANGELOG.md")) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $name) -Destination $binaryDirectory -Force
 }
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party") -Destination $binaryDirectory -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $binaryDirectory "scripts") -Force | Out-Null
-foreach ($launcher in @("Start-CodexAuto.ps1", "Start-CodexAuto.cmd", "Install-CodexStartup.ps1", "Watch-Codex.ps1")) {
+foreach ($launcher in @("Start-CodexAuto.ps1", "Install-CodexStartup.ps1", "Launch-Package.vbs", "Install-Startup-Package.vbs")) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $launcher) -Destination (Join-Path $binaryDirectory "scripts") -Force
 }
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Launch-Package.cmd") -Destination (Join-Path $binaryDirectory "启动 Codex 自动用量.cmd") -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Install-Startup-Package.cmd") -Destination (Join-Path $binaryDirectory "设置随 Codex 启动.cmd") -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Launch-Package.vbs") -Destination (Join-Path $binaryDirectory "启动 Codex 自动用量.vbs") -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Install-Startup-Package.vbs") -Destination (Join-Path $binaryDirectory "设置开机自动启动.vbs") -Force
+& (Join-Path $PSScriptRoot "Verify.ps1") -ExecutablePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -OutputDirectory (Join-Path $binaryDirectory "verification")
 $previewDirectory = Join-Path $repositoryRoot "previews"
 $previewProcess = Start-Process -FilePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -ArgumentList @("--render-preview", ('"' + $previewDirectory + '"')) -WindowStyle Hidden -PassThru -Wait
 if ($previewProcess.ExitCode -ne 0) { throw "生成预览失败。" }

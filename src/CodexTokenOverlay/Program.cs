@@ -13,6 +13,9 @@ internal static class Program
     private static void Main(string[] args)
     {
         if (StartupHost.TryRun(args)) return;
+        // Old login shortcuts and recovery tasks now enter the real GUI singleton.
+        // A watcher host must never be mistaken for a running overlay again.
+        args = args.Where(arg => arg is not "--watch-codex" and not "--login-startup").ToArray();
         var sessionRoot = SessionPathResolver.Resolve(args);
         if (DiagnosticsRunner.TryRun(args, sessionRoot) || ProbeRunner.TryRun(args, sessionRoot))
         {
