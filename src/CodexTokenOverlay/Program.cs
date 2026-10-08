@@ -12,6 +12,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (StartupHost.TryRun(args)) return;
         var sessionRoot = SessionPathResolver.Resolve(args);
         if (DiagnosticsRunner.TryRun(args, sessionRoot) || ProbeRunner.TryRun(args, sessionRoot))
         {

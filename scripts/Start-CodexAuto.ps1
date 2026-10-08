@@ -7,8 +7,8 @@ if ($CreateShortcut) {
     $desktop = [Environment]::GetFolderPath('Desktop')
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut((Join-Path $desktop 'Codex 自动用量.lnk'))
-    $shortcut.TargetPath = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
-    $shortcut.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $PSCommandPath + '"'
+    $shortcut.TargetPath = $overlay
+    $shortcut.Arguments = '--launch-codex'
     $shortcut.WorkingDirectory = $releaseRoot
     $shortcut.IconLocation = $overlay
     $shortcut.Save()

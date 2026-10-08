@@ -18,8 +18,8 @@ $originalHash=(Get-FileHash "$links/Desktop/Codex.lnk").Hash
 Check (Test-Path "$links/State/desktop.lnk") 'original backup'
 foreach($relative in @('Desktop/Codex.lnk','Programs/Codex.lnk','Startup/Codex 用量自动启动.lnk')) {
  $link=$shell.CreateShortcut((Join-Path $links $relative))
- Check ($link.TargetPath -like '*WindowsPowerShell*v1.0*powershell.exe') 'powershell target'
- Check ($link.Arguments -like '*-WindowStyle Hidden*') 'hidden target'
+ Check ($link.TargetPath -eq (Join-Path $FixtureRoot 'CodexRelayUsage.exe')) 'console-free executable target'
+ Check ($link.Arguments -in @('--launch-codex','--watch-codex')) 'GUI startup mode'
  Check ($link.WorkingDirectory -eq $FixtureRoot) 'correct package'
 }
 & "$FixtureRoot/scripts/Install-CodexStartup.ps1" -ShortcutRoot $links -NoStart

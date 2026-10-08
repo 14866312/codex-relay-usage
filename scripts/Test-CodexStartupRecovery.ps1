@@ -9,7 +9,7 @@ if (-not $task) { throw 'FAIL: no recovery task; login watcher termination perma
 if ($task.Description -ne 'CodexRelayUsage startup watcher recovery') { throw 'Unexpected task owner' }
 if (-not ($task.Triggers | Where-Object { $_.Repetition.Interval -eq 'PT1M' })) { throw 'FAIL: no periodic recovery trigger' }
 if ($task.Settings.ExecutionTimeLimit -ne 'PT0S') { throw 'FAIL: watcher has a runtime limit' }
-if ($task.Actions.Arguments -notlike ('*"' + $watcher + '"')) { throw 'FAIL: wrong installed package' }
+if ($task.Actions.Execute -ne $exe -or $task.Actions.Arguments -ne '--watch-codex') { throw 'FAIL: wrong installed package' }
 $app = Get-Process ChatGPT -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path -like '*\OpenAI.Codex_*\app\ChatGPT.exe' } | Select-Object -First 1
 if (-not $app) { throw 'Open Codex first; this check never restarts Codex.' }
 $codexPid = $app.Id

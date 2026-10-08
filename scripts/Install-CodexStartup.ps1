@@ -33,7 +33,7 @@ if (-not $ShortcutRoot) {
         if ($existingTask -and $existingTask.Description -ne 'CodexRelayUsage startup watcher recovery') {
             throw '同名计划任务不属于本工具，已取消设置。'
         }
-        $action = New-ScheduledTaskAction -Execute $powerShell -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $watcher + '"') -WorkingDirectory $releaseRoot
+        $action = New-ScheduledTaskAction -Execute $overlay -Argument '--watch-codex' -WorkingDirectory $releaseRoot
         $triggers = @(
             (New-ScheduledTaskTrigger -AtLogOn -User $identity.Name),
             (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1))
@@ -56,9 +56,9 @@ foreach ($entry in $entries) {
     $backup = Join-Path $stateRoot $entry.Backup
     $link = $null
     if (Test-Path -LiteralPath $entry.Path) { $link = $shell.CreateShortcut($entry.Path) }
-    $isOurs = $link -and $link.TargetPath -eq $powerShell -and
+    $isOurs = $link -and ($link.TargetPath -eq $powerShell -or [IO.Path]::GetFileName($link.TargetPath) -eq 'CodexRelayUsage.exe') -and
         $link.Description -eq 'Codex 与会话用量自动启动' -and
-        $link.Arguments -match '(Start-CodexAuto|Watch-Codex)\.ps1"$'
+        ($link.Arguments -match '(Start-CodexAuto|Watch-Codex)\.ps1"$' -or $link.Arguments -in @('--launch-codex','--watch-codex'))
     if ($Remove) {
         if ($isOurs) {
             Remove-Item -LiteralPath $entry.Path
@@ -75,8 +75,8 @@ foreach ($entry in $entries) {
         Copy-Item -LiteralPath $entry.Path -Destination $backup
     }
     $link = $shell.CreateShortcut($entry.Path)
-    $link.TargetPath = $powerShell
-    $link.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $entry.Script + '"'
+    $link.TargetPath = $overlay
+    $link.Arguments = if ($entry.Script -eq $watcher) { '--watch-codex' } else { '--launch-codex' }
     $link.WorkingDirectory = $releaseRoot
     $link.Description = 'Codex 与会话用量自动启动'
     $package = Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1
