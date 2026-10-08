@@ -7,7 +7,10 @@
     <Nullable>enable</Nullable>
     <AssemblyName>CodexRelayUsage</AssemblyName>
     <RootNamespace>CodexTokenOverlay</RootNamespace>
-    <Version>1.1.8</Version>
+    <Version>1.2.0</Version>
+    <Product>Codex 用量助手</Product>
+    <Title>Codex Usage Assistant</Title>
+    <ApplicationIcon>Assets/app.ico</ApplicationIcon>
     <Authors>14866312;soleillevant0125</Authors>
     <Description>A read-only Windows overlay for Codex Desktop token usage and configurable session cost estimates.</Description>
     <RepositoryUrl>https://github.com/14866312/codex-relay-usage</RepositoryUrl>
@@ -22,4 +25,7 @@
     <DebugSymbols>false</DebugSymbols>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets/app.ico" LogicalName="CodexTokenOverlay.Assets.app.ico" />
+  </ItemGroup>
 </Project>

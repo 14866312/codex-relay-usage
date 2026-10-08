@@ -88,6 +88,14 @@ internal static class DiagnosticsRunner
             using (var graphics = Graphics.FromImage(shaped)) { graphics.Clear(Color.Transparent); if (form.Region is not null) graphics.Clip = form.Region; graphics.DrawImageUnscaled(bitmap, 0, 0); }
             shaped.Save(Path.Combine(directory, $"{theme.ToString().ToLowerInvariant()}-{(expanded ? "expanded" : "collapsed")}{(costs ? "-cost" : "")}.png"), ImageFormat.Png);
         }
+        var isolated = Path.Combine(Path.GetTempPath(), "CodexRelayUsage-menu-preview-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(isolated, "sessions"));
+        try
+        {
+            using var context = new OverlayContext(Path.Combine(isolated, "sessions"), Path.Combine(isolated, "settings.json"), false, false);
+            context.RenderTrayPreviews(directory);
+        }
+        finally { Directory.Delete(isolated, true); }
     }
     private static CodexWindowInfo Host(uint dpi) => new(new IntPtr(123), new(0, 0, 1400, 1000), new(0, 0, 1400, 1000),
         null, new(0, 0, 3000, 2000), dpi, new(46, 30, 8, 8, 4));

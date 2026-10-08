@@ -106,6 +106,7 @@ internal sealed class TokenStripForm : Form
     private OverlayLayoutResult? _regionLayout;
     private double _regionReveal = -1;
     private bool _feedbackDisposed;
+    private int _panelHover, _panelPressed;
 
     public TokenStripForm(bool? motionEnabled = null)
     {
@@ -141,6 +142,7 @@ internal sealed class TokenStripForm : Form
     }
 
     public event EventHandler? CapsuleClicked;
+    public event EventHandler? CostDetailsRequested;
     public event EventHandler<OverlayEditPreviewEventArgs>? EditPreviewChanged;
     public event EventHandler<OverlayEditPreviewEventArgs>? EditGestureCompleted;
     public event EventHandler? EditSaveRequested;
@@ -153,6 +155,17 @@ internal sealed class TokenStripForm : Form
     internal OverlayFeedbackFrame FeedbackFrame => _feedback.Frame;
     internal bool IsPointerPressed => _feedback.PointerDown;
     internal bool IsFeedbackTimerRunning => _animationTimer.Enabled;
+    internal Rectangle DetailsButtonBounds => PanelActionBounds(false);
+    internal Rectangle PanelCloseBounds => PanelActionBounds(true);
+    private Rectangle PanelActionBounds(bool close)
+    {
+        if (IsEditMode || CurrentLayout is null || CurrentLayout.PanelBounds.IsEmpty) return Rectangle.Empty;
+        var m = OverlayRenderMetrics.Create(CurrentLayout.Dpi, CurrentLayout.ScalePercent);
+        var content = Rectangle.Inflate(CurrentLayout.PanelBounds.ToRectangle(), -m.PanelPadding, -m.PanelPadding);
+        return close ? new(content.Right - m.HeaderHeight, content.Top, m.HeaderHeight, m.HeaderHeight)
+            : new(content.Left, content.Bottom - m.HeaderHeight - m.ProgressVerticalGap, content.Width, m.HeaderHeight + m.ProgressVerticalGap);
+    }
+    private int PanelActionAt(Point p) => !RevealedPanelBounds.Contains(p) ? 0 : PanelCloseBounds.Contains(p) ? 2 : DetailsButtonBounds.Contains(p) ? 1 : 0;
 
     internal int SetBoundsCoreCallCount { get; private set; }
     internal bool IsEditGestureActive => _editGesture is not null;
@@ -493,6 +506,7 @@ internal sealed class TokenStripForm : Form
         if (!IsEditMode)
         {
             _feedback.Move(false, Environment.TickCount64, CanAnimate);
+            _panelHover = 0; Invalidate();
             Cursor = Cursors.Default;
             RefreshFeedback();
         }
@@ -506,6 +520,7 @@ internal sealed class TokenStripForm : Form
 
     private void CancelPointerFeedback()
     {
+        _panelHover = _panelPressed = 0;
         _feedback.CancelPointer();
         _feedback.Finish();
         if (!IsEditMode && Capture) Capture = false;
@@ -518,7 +533,7 @@ internal sealed class TokenStripForm : Form
         base.OnMouseCaptureChanged(eventArgs);
         if (!Capture && !IsEditMode)
         {
-            if (_feedback.PointerDown) CancelPointerFeedback();
+            if (_feedback.PointerDown || _panelPressed != 0) CancelPointerFeedback();
             return;
         }
         if (Capture || _editGesture is null)
@@ -550,6 +565,10 @@ internal sealed class TokenStripForm : Form
     {
         if (!IsEditMode)
         {
+            if (button == MouseButtons.Left && PanelActionAt(clientPoint) is var action && action != 0)
+            {
+                _panelPressed = _panelHover = action; Capture = true; Invalidate(); return;
+            }
             if (button == MouseButtons.Left && _feedback.Down(IsCapsulePoint(clientPoint), Environment.TickCount64, CanAnimate))
             {
                 Capture = true;
@@ -582,7 +601,8 @@ internal sealed class TokenStripForm : Form
         {
             var inside = IsCapsulePoint(clientPoint);
             _feedback.Move(inside, Environment.TickCount64, CanAnimate);
-            Cursor = inside ? Cursors.Hand : Cursors.Default;
+            var action = PanelActionAt(clientPoint); if (action != _panelHover) { _panelHover = action; Invalidate(); }
+            Cursor = inside || action != 0 ? Cursors.Hand : Cursors.Default;
             RefreshFeedback();
             return;
         }
@@ -642,6 +662,13 @@ internal sealed class TokenStripForm : Form
             return;
         }
 
+        if (_panelPressed != 0)
+        {
+            var action = _panelPressed; var invoke = action == PanelActionAt(clientPoint); _panelPressed = 0;
+            if (Capture) Capture = false; Invalidate();
+            if (invoke) { if (action == 1) CostDetailsRequested?.Invoke(this, EventArgs.Empty); else CapsuleClicked?.Invoke(this, EventArgs.Empty); }
+            return;
+        }
         var clicked = _feedback.Up(IsCapsulePoint(clientPoint), Environment.TickCount64, CanAnimate);
         if (Capture) Capture = false;
         RefreshFeedback();
@@ -839,7 +866,7 @@ internal sealed class TokenStripForm : Form
         var extraWidth = Math.Min(content.Width / 2, TextRenderer.MeasureText(graphics, extra, labelFont, Size.Empty, TextFormatFlags.NoPadding).Width + metrics.MetricGap);
         var pillBounds = new Rectangle(content.X + metrics.HeaderHeight, content.Y, content.Width - extraWidth - metrics.HeaderHeight, content.Height);
         using var iconPen = new Pen(_palette.Label, metrics.StrokeWidth);
-        DrawDatabaseIcon(graphics, new Rectangle(content.X, content.Y + (content.Height - metrics.DividerHeight) / 2, metrics.DividerHeight, metrics.DividerHeight), iconPen);
+        UiIcons.Draw(graphics, UiGlyph.Chart, new Rectangle(content.X, content.Y + (content.Height - metrics.DividerHeight) / 2, metrics.DividerHeight, metrics.DividerHeight), _palette.Label, _palette.Accent);
         TextRenderer.DrawText(graphics, pillText, labelFont, pillBounds, _palette.Value, TextFlags);
         TextRenderer.DrawText(graphics, extra, labelFont, new Rectangle(content.Right - extraWidth, content.Y, extraWidth, content.Height), _palette.Label, TextFlags | TextFormatFlags.Right);
         DrawEditHandle(graphics, dividerPen, metrics, decorations);
@@ -907,19 +934,47 @@ internal sealed class TokenStripForm : Form
         var padding = metrics.PanelPadding;
         var content = Rectangle.Inflate(bounds, -padding, -padding);
         var rowHeight = layout.ExpandedRowHeight;
-        var header = new Rectangle(content.Left, content.Top, content.Width, metrics.HeaderHeight + metrics.HighlightTopGap);
+        var header = new Rectangle(content.Left, content.Top, content.Width - metrics.HeaderHeight - metrics.MetricGap, metrics.HeaderHeight);
         var total = _presentation.Total ?? _presentation.Primary;
-        TextRenderer.DrawText(graphics, "Token 用量", headerFont, header, _palette.Value, TextFlags);
-        TextRenderer.DrawText(graphics, total.Value, headerFont, header, _palette.Value, TextFlags | TextFormatFlags.Right);
-        var rowsTop = header.Bottom + metrics.HighlightTopGap;
+        TextRenderer.DrawText(graphics, "Token 用量", labelFont, header, _palette.Label, TextFlags);
+        var number = new Rectangle(content.Left, header.Bottom, content.Width, metrics.HeaderHeight + metrics.HighlightTopGap);
+        TextRenderer.DrawText(graphics, total.Value, highlightedValueFont, number, _palette.Value, TextFlags);
+        var rowsTop = number.Bottom + metrics.HighlightTopGap;
         graphics.DrawLine(dividerPen, content.Left, rowsTop, content.Right, rowsTop);
         rowsTop += metrics.HighlightTopGap;
         for (var index = 0; index < _presentation.ExpandedRows.Count; index++)
         {
             var rowBounds = new Rectangle(content.Left, rowsTop + index * rowHeight, content.Width, rowHeight);
+            var metric = _presentation.ExpandedRows[index];
+            if (metric.Field == DisplayField.Cost && metric.ExpandedLabel == "会话费用估算")
+            {
+                using var shade = new SolidBrush(_palette.InputSurface);
+                using var box = UiDrawing.Round(Rectangle.Inflate(rowBounds, 4, -1), 5); graphics.FillPath(shade, box);
+            }
             DrawExpandedRow(graphics, _presentation.ExpandedRows[index], rowBounds, labelFont, valueFont);
+            if (metric.Field == DisplayField.ContextPercent && _presentation.ShowContextProgress)
+            {
+                var track = new Rectangle(rowBounds.Left, rowBounds.Bottom - metrics.ProgressTrackHeight, rowBounds.Width, metrics.ProgressTrackHeight);
+                using var trackPath = UiDrawing.Round(track, metrics.ProgressTrackHeight / 2f); graphics.FillPath(progressTrackBrush, trackPath);
+                var fill = track with { Width = (int)(track.Width * Math.Clamp(_presentation.ContextPercent / 100d, 0, 1)) };
+                if (fill.Width > 0) { using var color = new SolidBrush(_palette.ContextColor(_presentation.ContextPercent)); using var fillPath = UiDrawing.Round(fill, metrics.ProgressTrackHeight / 2f); graphics.FillPath(color, fillPath); }
+            }
         }
-
+        DrawPanelAction(graphics, PanelCloseBounds, 2, labelFont, metrics);
+        DrawPanelAction(graphics, DetailsButtonBounds, 1, labelFont, metrics);
+    }
+    private void DrawPanelAction(Graphics graphics, Rectangle bounds, int action, Font font, OverlayRenderMetrics m)
+    {
+        if (bounds.IsEmpty) return;
+        var pressed = _panelPressed == action && _panelHover == action;
+        if (_panelHover == action)
+        {
+            using var b = new SolidBrush(pressed ? _palette.ToolbarPressed : _palette.ToolbarHover);
+            using var p = UiDrawing.Round(bounds, m.CapsuleRadius); graphics.FillPath(b, p);
+        }
+        if (pressed) bounds.Offset(0, m.StrokeWidth);
+        if (action == 2) UiIcons.Draw(graphics, UiGlyph.Close, Rectangle.Inflate(bounds, -m.HighlightTopGap, -m.HighlightTopGap), _palette.Label, _palette.Label);
+        else TextRenderer.DrawText(graphics, "查看费用明细  →", font, bounds, _palette.Accent, TextFlags | TextFormatFlags.HorizontalCenter);
     }
 
     private static void DrawDatabaseIcon(Graphics graphics, Rectangle bounds, Pen pen)
@@ -1018,6 +1073,8 @@ internal sealed class TokenStripForm : Form
 
     private Color ValueColorFor(OverlayMetric metric) =>
         metric.Field is DisplayField.Context or DisplayField.ContextPercent
+            ? _palette.ContextColor(_presentation.ContextPercent)
+            : metric.Field is DisplayField.Cost
             ? _palette.Accent
             : _palette.Value;
 

@@ -21,7 +21,7 @@ internal sealed record OverlayThemePalette(
     Color TargetHighlight)
 {
     private static readonly OverlayThemePalette DarkPalette = new(
-        Color.FromArgb(33, 34, 37),
+        Color.FromArgb(34, 36, 41),
         Color.FromArgb(157, 161, 170),
         Color.FromArgb(245, 245, 247),
         Color.FromArgb(185, 174, 255),
@@ -33,7 +33,7 @@ internal sealed record OverlayThemePalette(
         Color.FromArgb(142, 126, 255));
 
     private static readonly OverlayThemePalette LightPalette = new(
-        Color.FromArgb(250, 251, 252),
+        Color.FromArgb(252, 253, 255),
         Color.FromArgb(92, 96, 105),
         Color.FromArgb(28, 29, 33),
         Color.FromArgb(91, 72, 190),
@@ -54,7 +54,15 @@ internal sealed record OverlayThemePalette(
     public Color ToolbarOpen => IsLight ? Color.FromArgb(229, 237, 245) : Color.FromArgb(44, 46, 51);
     public Color ToolbarBorder => Color.FromArgb(IsLight ? 14 : 22, IsLight ? Color.Black : Color.White);
     public Color ToolbarActiveBorder => Color.FromArgb(IsLight ? 42 : 58, IsLight ? Color.Black : Color.White);
-    private bool IsLight => Background.GetBrightness() > .5f;
+    public bool IsLight => Background.GetBrightness() > .5f;
+    public Color InputSurface => IsLight ? Color.FromArgb(246, 248, 252) : Color.FromArgb(27, 29, 34);
+    public Color Primary => IsLight ? Color.FromArgb(112, 96, 232) : Color.FromArgb(125, 107, 240);
+    public Color PrimaryHover => IsLight ? Color.FromArgb(96, 79, 217) : Color.FromArgb(146, 128, 255);
+    public Color PrimaryPressed => Color.FromArgb(83, 64, 196);
+    public Color Danger => IsLight ? Color.FromArgb(212, 66, 80) : Color.FromArgb(255, 127, 138);
+    public Color Warning => IsLight ? Color.FromArgb(180, 116, 24) : Color.FromArgb(238, 186, 88);
+    public Color Success => IsLight ? Color.FromArgb(37, 161, 110) : Color.FromArgb(99, 210, 160);
+    public Color ContextColor(double percent) => percent >= 95 ? Danger : percent >= 80 ? Warning : Accent;
 
     public Color ToolbarFill(OverlayFeedbackFrame frame) =>
         Blend(Blend(Blend(ToolbarSurface, ToolbarOpen, frame.Open), ToolbarHover, frame.Hover), ToolbarPressed, frame.Press);

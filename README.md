@@ -1,24 +1,24 @@
-# CodexRelayUsage 1.1.8
+# Codex 用量助手 · Codex Usage Assistant 1.2.0
 
 适用于 API 中转站模型的 Windows Codex 会话用量与费用估算工具，直接读取 Codex 本地日志，无需 API 密钥。
 
 悬浮条位于顶部“文件／编辑／视图／帮助”右侧空白区，点击向下展开。支持悬停／按下反馈、主题、位置缩放、逐次用量更新、会话自动跟随和费用估算。金额统一显示三位小数，小额正数显示 <$0.001，内部计算保留完整精度。
 
-![工具栏交互状态（合成数据）](previews/light-toolbar-states.png)
+![新版界面总览（实际窗体、合成数据）](previews/overview.png)
 
-1.1.8 改为登录 Windows 后直接启动图形程序，常驻托盘，Codex 打开后自动显示。设置时移除旧监视计划任务及常驻 PowerShell 监视器，原来的 .cmd 入口改为无控制台 .vbs 入口。旧 --watch-codex 参数也进入实际工具，防止把启动器误认为已经运行的悬浮窗。
+1.2.0 更名为 **Codex 用量助手**，采用石墨底紫色计量图标、浅深色圆角卡片、上下文进度条、统一按钮与输入框。托盘命令按“外观”和“会话与数据”归类，模型价格采用左右分栏，费用明细支持已计价与未计价页签。悬浮条和卡片均有悬停、按下反馈；窗口支持高 DPI 及小屏幕适配。
 
-- [下载 Windows x64 独立版](https://github.com/14866312/codex-relay-usage/releases/latest)：解压，运行 CodexRelayUsage.exe；托盘选择“设置开机自动启动…”，或双击“设置开机自动启动.vbs”。自带 .NET 10 运行时。
+- [下载 Windows x64 独立版](https://github.com/14866312/codex-relay-usage/releases/latest)：解压，运行 CodexRelayUsage.exe；托盘勾选“开机启动”，或双击“设置开机自动启动.vbs”。自带 .NET 10 运行时。
 - [中文使用说明](README.zh-CN.md) · [版本变更](CHANGELOG.md) · [验证记录](ACCEPTANCE.zh-CN.md)
 
 开机启动只启动用量工具。保留桌面／开始菜单的 Codex 启动入口，按当前安装路径启动 Codex，并携带回环地址、随机端口的本地页面路由识别参数；同名对话据唯一 ID 区分。从原商店入口打开时，驻留工具同样会显示，但没有该连接的进程仍使用兼容识别。当前运行的 Codex 不会被安装程序关闭或重启。主动退出工具后，下次登录或手动运行才会恢复；移动或升级独立版目录后重新设置启动。
 
 对话进行中随每条调用用量报告更新，不必等整轮完成。日志没有逐个生成 token 的计数，尚未报告的单次调用不能提前显示准确用量。窗口由 Windows 原生位置事件跟随，保留 16ms 拖动补偿。新版复用未变化的日志快照和读缓冲，降低后台补偿频率、跳过重复展示更新；发布保留中英文资源，减少其他语言运行时资源。
 
-Windows 独立包约从 44.6 MiB 减至 42.5 MiB（约 4.6%）；本机静置样本中，工具常驻进程从三个减为一个，总私有内存约从 215.1 MiB 降至 73.1 MiB。具体采样条件与验证边界见验证记录。
+继续使用轻量的 WinForms / GDI+，没有新增 UI 框架或常驻辅助进程。登录入口直接启动 GUI EXE；历史版本的体积与资源样本见验证记录。
 
 费用支持基础价乘倍率／直接折后价、可关闭的双档价格、精确模型别名绑定、分模型汇总和改价重算历史。按去重的逐次调用计费，累计快照只展示 Token 并核对完整性。只统计当前线程，不合并子代理。缺失或被上游改写的用量无法从日志还原，金额为按当前配置估算的费用。
 
 ![费用与模型价格（合成数据）](previews/light-expanded-cost.png)
 
-个人价格和设置保留在本机，不进入源码或发布包。由 [codex-token-overlay](https://github.com/soleillevant0125/codex-token-overlay) 的 MIT 代码衍生，原版权与 .NET 许可均保留，见 [UPSTREAM.md](UPSTREAM.md)。
+升级保留个人价格、位置、字段、主题与开机启动配置。EXE 名 CodexRelayUsage.exe、配置目录 CodexRelayUsage 和仓库地址继续兼容旧版本。个人价格和设置不进入源码或发布包。由 [codex-token-overlay](https://github.com/soleillevant0125/codex-token-overlay) 的 MIT 代码衍生，原版权与 .NET 许可均保留，见 [UPSTREAM.md](UPSTREAM.md)。

@@ -40,6 +40,7 @@ $costUiProcess = Start-Process -FilePath (Join-Path $binaryDirectory "CodexRelay
 if ($costUiProcess.ExitCode -ne 0) { throw "生成费用窗口预览失败。" }
 $feedbackUiProcess = Start-Process -FilePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -ArgumentList @("--feedback-ui-probe", ('"' + (Join-Path $binaryDirectory "verification/feedback-ui-previews.json") + '"'), ('"' + $previewDirectory + '"')) -WindowStyle Hidden -PassThru -Wait
 if ($feedbackUiProcess.ExitCode -ne 0) { throw "生成工具栏交互预览失败。" }
+& (Join-Path $PSScriptRoot "Generate-PreviewBoard.ps1") -PreviewDirectory $previewDirectory
 Copy-Item -LiteralPath $previewDirectory -Destination $binaryDirectory -Recurse -Force
 $exeHash = (Get-FileHash -LiteralPath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
 [System.IO.File]::WriteAllText((Join-Path $binaryDirectory "SHA256SUMS.txt"), "$exeHash  CodexRelayUsage.exe" + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))

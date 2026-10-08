@@ -29,11 +29,11 @@ internal static class StartupHost
             if (install && !args.Contains("--quiet"))
                 MessageBox.Show(child.ExitCode == 0
                     ? args.Contains("--remove-startup") ? "已取消开机自动启动。" : "已设置登录 Windows 后自动启动。Codex 打开后悬浮条会自动出现。"
-                    : "自动启动设置失败，请运行 scripts/Install-CodexStartup.ps1 查看原因。", "Codex 会话用量");
+                    : "自动启动设置失败，请运行 scripts/Install-CodexStartup.ps1 查看原因。", AppBrand.Name);
         }
         catch (Exception error)
         {
-            if (!args.Contains("--quiet")) MessageBox.Show(error.Message, "Codex 会话用量");
+            if (!args.Contains("--quiet")) MessageBox.Show(error.Message, AppBrand.Name);
             Environment.ExitCode = 1;
         }
         return true;

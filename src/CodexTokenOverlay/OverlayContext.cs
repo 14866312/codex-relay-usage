@@ -61,8 +61,12 @@ internal sealed class OverlayContext : ApplicationContext
     private long _selectionRevision;
     private string? _pendingError => _selection.Error;
     private OverlayThemePalette _systemPalette = OverlayThemePalette.For(OverlayThemeKind.Dark);
+    private ContextMenuStrip? _trayMenu;
+    private readonly Font _menuFont = new("Microsoft YaHei UI", 9f);
+    private Icon? _trayOwnedIcon;
+    private ModernDialog? _activeDialog;
 
-    public OverlayContext(string sessionRoot, string? settingsPath = null, bool useSavedRoot = true)
+    public OverlayContext(string sessionRoot, string? settingsPath = null, bool useSavedRoot = true, bool showTrayIcon = true)
     {
         _settingsPath = settingsPath;
         _settings = OverlaySettings.Load(_settingsPath);
@@ -84,7 +88,7 @@ internal sealed class OverlayContext : ApplicationContext
             new WindowsOverlayThemeSource(),
             ApplyTheme);
 
-        var menu = new ContextMenuStrip();
+        var menu = new ContextMenuStrip { Font = _menuFont };
         _sessionMenuItem = new ToolStripMenuItem("会话：等待数据") { Enabled = false };
         menu.Items.Add(_sessionMenuItem);
         _pinSessionMenuItem = new ToolStripMenuItem("锁定当前会话") { CheckOnClick = true, Checked = _manualThreadId is not null };
@@ -191,8 +195,8 @@ internal sealed class OverlayContext : ApplicationContext
         };
         menu.Items.Add(_visibilityMenuItem);
 
-        var startupItem = new ToolStripMenuItem("设置开机自动启动…");
-        startupItem.Click += (_, _) => StartStartupSettings("--install-startup");
+        var startupItem = new ToolStripMenuItem("开机启动");
+        startupItem.Click += (_, _) => StartStartupSettings(startupItem.Checked ? "--remove-startup" : "--install-startup");
         menu.Items.Add(startupItem);
         var removeStartupItem = new ToolStripMenuItem("取消开机自动启动");
         removeStartupItem.Click += (_, _) => StartStartupSettings("--remove-startup");
@@ -202,11 +206,31 @@ internal sealed class OverlayContext : ApplicationContext
         exitItem.Click += (_, _) => ExitOverlay();
         menu.Items.Add(exitItem);
 
+        // Keep all existing commands while grouping them into the compact design.
+        var positionMenu = new ToolStripMenuItem("位置与大小") { Tag = UiGlyph.Position };
+        var appearanceMenu = new ToolStripMenuItem("外观") { Tag = UiGlyph.Palette };
+        var dataMenu = new ToolStripMenuItem("会话与数据") { Tag = UiGlyph.Data };
+        var unusedSeparators = menu.Items.OfType<ToolStripSeparator>().ToArray();
+        menu.Items.Clear();
+        foreach (var separator in unusedSeparators) separator.Dispose();
+        positionMenu.DropDownItems.AddRange([_adjustManualMenuItem, _saveManualMenuItem, _cancelManualMenuItem, _resetManualMenuItem, _traditionalMenuItem]);
+        appearanceMenu.DropDownItems.AddRange([positionMenu, collapsedFieldsMenu, fieldsMenu, themeMenu]);
+        dataMenu.DropDownItems.AddRange([_pinSessionMenuItem, selectItem, bindItem, new ToolStripSeparator(), directoryItem]);
+        pricesItem.Tag = UiGlyph.Price; costsItem.Tag = UiGlyph.Cost; collapsedFieldsMenu.Tag = UiGlyph.Rows; fieldsMenu.Tag = UiGlyph.Fields; themeMenu.Tag = UiGlyph.Palette;
+        _sessionMenuItem.Tag = UiGlyph.Link; _visibilityMenuItem.Tag = UiGlyph.Hide; startupItem.Tag = UiGlyph.Startup; exitItem.Tag = UiGlyph.Exit;
+        _adjustManualMenuItem.Tag = UiGlyph.Position; _resetManualMenuItem.Tag = UiGlyph.Position; directoryItem.Tag = UiGlyph.Folder; bindItem.Tag = UiGlyph.Link;
+        menu.Items.AddRange([_sessionMenuItem, new ToolStripSeparator(), pricesItem, costsItem, new ToolStripSeparator(), appearanceMenu, dataMenu, _visibilityMenuItem, new ToolStripSeparator(), startupItem, new ToolStripSeparator(), exitItem]);
+        removeStartupItem.Dispose();
+        menu.Opening += (_, _) => startupItem.Checked = File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Codex 用量自动启动.lnk"));
+        _trayMenu = menu;
+        ModernMenuRenderer.Apply(menu, _form.CurrentThemePalette);
+        _trayOwnedIcon = AppBrand.TrayIcon(_form.CurrentThemePalette);
+
         _trayIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Information,
-            Text = "Codex 会话用量",
-            Visible = true,
+            Icon = _trayOwnedIcon,
+            Text = AppBrand.Name,
+            Visible = showTrayIcon,
             ContextMenuStrip = menu
         };
         if (pricingLoad.Error is not null)
@@ -214,6 +238,7 @@ internal sealed class OverlayContext : ApplicationContext
 
         _form.SetPresentation(_presentation);
         _form.CapsuleClicked += HandleCapsuleClicked;
+        _form.CostDetailsRequested += (_, _) => ShowCostDetails();
         _form.EditPreviewChanged += HandleEditPreviewChanged;
         _form.EditGestureCompleted += HandleEditGestureCompleted;
         _form.EditSaveRequested += (_, _) => SaveManualEditing();
@@ -582,8 +607,8 @@ internal sealed class OverlayContext : ApplicationContext
 
     private void RefreshTrayText()
     {
-        var text = _lastSnapshot is null ? "Codex 会话用量 · 等待当前会话" :
-            TrimTrayText($"Codex {OverlayPresentationBuilder.ShortThreadId(_lastSnapshot.ThreadId)} · {OverlayPresentationBuilder.FormatTokenCount(_lastSnapshot.EffectiveTotalTokens)} tok");
+        var text = _lastSnapshot is null ? AppBrand.Name + " · 等待当前会话" :
+            TrimTrayText($"{AppBrand.Name} · {OverlayPresentationBuilder.FormatTokenCount(_lastSnapshot.EffectiveTotalTokens)} tok");
         if (_trayIcon.Text != text) _trayIcon.Text = text;
     }
 
@@ -600,6 +625,28 @@ internal sealed class OverlayContext : ApplicationContext
         _manuallyHidden = true; Tick(); _timer.Stop();
     }
     internal TokenSnapshot? ReadLiveProbeSnapshot() => _lastSnapshot;
+
+    // Renders the real command tree with an isolated configuration, never the user's logs.
+    internal void RenderTrayPreviews(string directory)
+    {
+        _manuallyHidden = true; _timer.Stop(); _outsideClickTimer.Stop(); _hostMoveTimer.Stop();
+        _trayIcon.Visible = false;
+        _sessionMenuItem.Text = "自动跟随 · 当前对话";
+        foreach (var theme in new[] { OverlayThemeKind.Light, OverlayThemeKind.Dark })
+        {
+            ModernMenuRenderer.Apply(_trayMenu!, OverlayThemePalette.For(theme));
+            SaveMenu(_trayMenu!, Path.Combine(directory, theme.ToString().ToLowerInvariant() + "-tray-menu.png"));
+            var appearance = _trayMenu!.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "外观");
+            SaveMenu(appearance.DropDown, Path.Combine(directory, theme.ToString().ToLowerInvariant() + "-appearance-menu.png"));
+        }
+    }
+    private static void SaveMenu(ToolStripDropDown menu, string path)
+    {
+        menu.CreateControl(); menu.Size = menu.GetPreferredSize(Size.Empty); menu.PerformLayout();
+        using var bitmap = new Bitmap(menu.Width, menu.Height);
+        menu.DrawToBitmap(bitmap, new(Point.Empty, bitmap.Size));
+        bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+    }
 
     private void RefreshPresentation()
     {
@@ -623,6 +670,7 @@ internal sealed class OverlayContext : ApplicationContext
         var models = _lastSnapshot?.Ledger?.Calls.Select(c => c.Model).OfType<string>().ToArray() ?? Array.Empty<string>();
         if (_lastSnapshot?.Model is { } model) models = models.Append(model).ToArray();
         using var editor = new ModelPriceForm(_prices.Settings, models, _pricingPath);
+        editor.ApplyTheme(_form.CurrentThemePalette); _activeDialog = editor;
         if (editor.ShowDialog() == DialogResult.OK && editor.SavedSettings is { } saved)
         {
             var firstSetup = _prices.Settings.Profiles.Count == 0 && saved.Profiles.Count > 0;
@@ -637,6 +685,7 @@ internal sealed class OverlayContext : ApplicationContext
             }
             RefreshPresentation(); RequestBackgroundPoll();
         }
+        _activeDialog = null;
         if (_currentTarget is not null) SetForegroundWindow(_currentTarget.HostWindow.Handle);
         Tick();
     }
@@ -650,6 +699,7 @@ internal sealed class OverlayContext : ApplicationContext
             _costDetails.FormClosed += (_, _) => _costDetails = null;
         }
         _costDetails.SetResult(_pendingThreadId, _cost);
+        _costDetails.ApplyTheme(_form.CurrentThemePalette);
         _costDetails.Show();
         if (_costDetails.WindowState == FormWindowState.Minimized) _costDetails.WindowState = FormWindowState.Normal;
         _costDetails.Activate();
@@ -661,6 +711,7 @@ internal sealed class OverlayContext : ApplicationContext
         var entries = await Task.Run(() => _monitor.ListSessions());
         if (Volatile.Read(ref _disposed) != 0) return;
         using var picker = new SessionPickerForm(entries);
+        picker.ApplyTheme(_form.CurrentThemePalette); _activeDialog = picker;
         if (picker.ShowDialog() == DialogResult.OK && picker.SelectedThreadId is { } id)
         {
             _manualThreadId = id;
@@ -669,6 +720,7 @@ internal sealed class OverlayContext : ApplicationContext
             _pinSessionMenuItem.Checked = true;
             _selectionRevision++;
         }
+        _activeDialog = null;
         if (_currentTarget is not null) SetForegroundWindow(_currentTarget.HostWindow.Handle);
         Tick();
     }
@@ -690,6 +742,7 @@ internal sealed class OverlayContext : ApplicationContext
             var entries = await Task.Run(() => _monitor.ListSessions());
             if (Volatile.Read(ref _disposed) != 0) return;
             using var picker = new SessionPickerForm(entries.Where(e => e.Title == target.Title).ToArray(), target.Title);
+            picker.ApplyTheme(_form.CurrentThemePalette); _activeDialog = picker;
             if (picker.ShowDialog() == DialogResult.OK && picker.SelectedThreadId is { } id)
             {
                 var error = await _routeMonitor.BindAsync(target, id);
@@ -706,6 +759,7 @@ internal sealed class OverlayContext : ApplicationContext
         }
         finally
         {
+            _activeDialog = null;
             _bindingPickerOpen = false;
             if (Volatile.Read(ref _disposed) == 0)
             {
@@ -1182,7 +1236,8 @@ internal sealed class OverlayContext : ApplicationContext
         var shortId = string.IsNullOrWhiteSpace(threadId)
             ? "等待识别"
             : OverlayPresentationBuilder.ShortThreadId(threadId);
-        _sessionMenuItem.Text = $"会话：{shortId} · {FollowSelection.Status(_pendingRouteStatus, _manualThreadId)}";
+        _sessionMenuItem.Text = _manualThreadId is not null ? "已锁定 · 当前会话" : threadId is null ? "等待识别当前对话" : "自动跟随 · 当前对话";
+        _sessionMenuItem.ToolTipText = $"{shortId} · {FollowSelection.Status(_pendingRouteStatus, _manualThreadId)}";
     }
 
     private void ApplyTheme(OverlayThemePalette palette)
@@ -1191,6 +1246,13 @@ internal sealed class OverlayContext : ApplicationContext
         var selected = _settings.ThemeMode switch { "light" => OverlayThemePalette.For(OverlayThemeKind.Light), "dark" => OverlayThemePalette.For(OverlayThemeKind.Dark), _ => palette };
         _form.ApplyTheme(selected);
         _targetHighlight.ApplyTheme(selected);
+        if (_trayMenu is not null) ModernMenuRenderer.Apply(_trayMenu, selected);
+        if (_trayIcon is not null)
+        {
+            var previous = _trayOwnedIcon; _trayOwnedIcon = AppBrand.TrayIcon(selected); _trayIcon.Icon = _trayOwnedIcon; previous?.Dispose();
+        }
+        _costDetails?.ApplyTheme(selected);
+        _activeDialog?.ApplyTheme(selected);
     }
 
     private static string TrimTrayText(string value) =>
@@ -1229,6 +1291,9 @@ internal sealed class OverlayContext : ApplicationContext
             _routeMonitor.StatusChanged -= QueueTick;
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
+            _trayOwnedIcon?.Dispose();
+            if (_trayMenu is not null) { ModernMenuRenderer.DisposeImages(_trayMenu); _trayMenu.Dispose(); }
+            _menuFont.Dispose();
             _readCancellation?.Cancel();
             _routeMonitor.Dispose();
             _monitor.Dispose();

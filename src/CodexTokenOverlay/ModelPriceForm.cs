@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace CodexTokenOverlay;
 
-internal sealed class ModelPriceForm : Form
+internal sealed class ModelPriceForm : ModernDialog
 {
     private readonly List<ModelPriceProfile> _profiles;
     private readonly string? _path;
@@ -12,66 +12,106 @@ internal sealed class ModelPriceForm : Form
     private readonly TextBox _aliases = new() { Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical };
     private readonly ComboBox _mode = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TextBox _multiplier = new() { Dock = DockStyle.Fill };
-    private readonly CheckBox _twoTiers = new() { Text = "按每次调用的总输入自动分档", AutoSize = true };
+    private readonly ModernToggle _twoTiers = new() { Text = "按每次调用的总输入自动分档" };
     private readonly TextBox _threshold = new() { Dock = DockStyle.Fill };
     private readonly TextBox[] _low = Enumerable.Range(0, 4).Select(_ => new TextBox { Dock = DockStyle.Fill }).ToArray();
     private readonly TextBox[] _high = Enumerable.Range(0, 4).Select(_ => new TextBox { Dock = DockStyle.Fill }).ToArray();
+    private readonly TextBox _search = new() { Name = "ProfileSearch", PlaceholderText = "搜索方案或模型…" };
+    private readonly Label _error = new() { AutoSize = true, Tag = "danger", Name = "PriceError" };
     private string? _currentId;
     private bool _loading;
     public PricingSettings? SavedSettings { get; private set; }
 
-    public ModelPriceForm(PricingSettings settings, IEnumerable<string> knownModels, string? path = null)
+    public ModelPriceForm(PricingSettings settings, IEnumerable<string> knownModels, string? path = null) : base("模型价格")
     {
         _profiles = settings.Profiles.ToList(); _path = path;
         _name.Name = "ProfileName"; _aliases.Name = "ModelAliases"; _mode.Name = "PriceMode";
         _multiplier.Name = "Multiplier"; _threshold.Name = "Threshold"; _twoTiers.Name = "TwoTiers";
         for (var i = 0; i < 4; i++) { _low[i].Name = "Low" + i; _high[i].Name = "High" + i; }
-        Text = "模型价格 · USD / 1M tokens"; Font = new Font("Microsoft YaHei UI", 9);
-        AutoScaleMode = AutoScaleMode.Dpi; StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new(1_080, 720); MinimumSize = new(940, 660);
+        ClientSize = new(1080, 780); MinimumSize = new(940, 700);
+        _list.BorderStyle = BorderStyle.None; _list.DrawMode = DrawMode.OwnerDrawFixed; _list.ItemHeight = 38;
+        _list.DrawItem += DrawProfile; _list.IntegralHeight = false;
         _model.Items.AddRange(knownModels.Concat(_profiles.SelectMany(p => p.Models)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Cast<object>().ToArray());
         if (_model.Items.Count > 0) _model.SelectedIndex = 0;
-        var left = new TableLayoutPanel { Dock = DockStyle.Left, Width = 250, Padding = new(10), ColumnCount = 1, RowCount = 5 };
-        left.RowStyles.Add(new(SizeType.AutoSize)); left.RowStyles.Add(new(SizeType.Percent, 100));
-        left.RowStyles.Add(new(SizeType.Absolute, 32)); left.RowStyles.Add(new(SizeType.Absolute, 38)); left.RowStyles.Add(new(SizeType.Absolute, 38));
-        left.Controls.Add(new Label { Text = "价格方案\n可绑定多个模型", AutoSize = true }, 0, 0); left.Controls.Add(_list, 0, 1);
-        left.Controls.Add(_model, 0, 2);
-        var add = new Button { Text = "添加模型 / 方案", Dock = DockStyle.Fill }; add.Click += (_, _) => AddProfile(); left.Controls.Add(add, 0, 3);
-        var remove = new Button { Text = "删除所选方案", Dock = DockStyle.Fill }; remove.Click += (_, _) => RemoveProfile(); left.Controls.Add(remove, 0, 4);
+        _model.AccessibleName = "要添加的完整模型名";
+        var left = new TableLayoutPanel { Dock = DockStyle.Left, Width = 230, Padding = new(0, 0, 20, 0), ColumnCount = 1, RowCount = 5 };
+        left.RowStyles.Add(new(SizeType.Absolute, 46)); left.RowStyles.Add(new(SizeType.Percent, 100));
+        left.RowStyles.Add(new(SizeType.Absolute, 30)); left.RowStyles.Add(new(SizeType.Absolute, 46)); left.RowStyles.Add(new(SizeType.Absolute, 44));
+        left.Controls.Add(new FieldFrame(_search), 0, 0); left.Controls.Add(_list, 0, 1);
+        left.Controls.Add(LabelFor("新增方案的完整模型名"), 0, 2); left.Controls.Add(new FieldFrame(_model), 0, 3);
+        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
+        actions.ColumnStyles.Add(new(SizeType.Percent, 74)); actions.ColumnStyles.Add(new(SizeType.Percent, 26));
+        var add = new ModernButton { Text = "新增方案", Glyph = UiGlyph.Add, Kind = ButtonKind.Secondary, Dock = DockStyle.Fill, Name = "AddProfile" };
+        var remove = new ModernButton { Glyph = UiGlyph.Delete, Kind = ButtonKind.Ghost, Dock = DockStyle.Fill, AccessibleName = "删除所选方案" };
+        add.Click += (_, _) => AddProfile(); remove.Click += (_, _) => RemoveProfile();
+        actions.Controls.Add(add, 0, 0); actions.Controls.Add(remove, 1, 0); left.Controls.Add(actions, 0, 4);
 
-        var editor = new TableLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new(12), ColumnCount = 2, RowCount = 9 };
-        editor.ColumnStyles.Add(new(SizeType.Absolute, 150)); editor.ColumnStyles.Add(new(SizeType.Percent, 100));
-        for (var i = 0; i < 9; i++) editor.RowStyles.Add(new(SizeType.AutoSize));
-        void Row(string label, Control value, int row) { editor.Controls.Add(new Label { Text = label, AutoSize = true, Padding = new(0, 5, 0, 0) }, 0, row); editor.Controls.Add(value, 1, row); }
-        Row("方案名称", _name, 0); _aliases.Height = 88; Row("完整模型名\n每行一个别名", _aliases, 1);
-        _mode.Items.AddRange(["基础单价 × 倍率", "直接填写折后单价"]); Row("价格录入方式", _mode, 2);
-        Row("计费倍率", _multiplier, 3); Row("双档价格", _twoTiers, 4); Row("分档阈值（tokens）", _threshold, 5);
-        var rates = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, RowCount = 5 };
-        rates.ColumnStyles.Add(new(SizeType.Percent, 32)); rates.ColumnStyles.Add(new(SizeType.Percent, 34)); rates.ColumnStyles.Add(new(SizeType.Percent, 34));
-        rates.Controls.Add(new Label { Text = "USD / 1M tokens", AutoSize = true }, 0, 0);
-        rates.Controls.Add(new Label { Text = "低档 / 统一价格", AutoSize = true }, 1, 0); rates.Controls.Add(new Label { Text = "高档（超过阈值）", AutoSize = true }, 2, 0);
+        var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new(6, 0, 0, 0) };
+        var editor = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 8, Margin = Padding.Empty };
+        var heights = new[] { 68, 96, 70, 68, 50, 230, 66, 32 };
+        foreach (var height in heights) editor.RowStyles.Add(new(SizeType.Absolute, height));
+        Control Field(string caption, Control value, int height = 38)
+        {
+            var field = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = new(0, 0, 0, 4) };
+            field.RowStyles.Add(new(SizeType.Absolute, 24)); field.RowStyles.Add(new(SizeType.Percent, 100));
+            field.Controls.Add(LabelFor(caption), 0, 0); field.Controls.Add(new FieldFrame(value, height), 0, 1); return field;
+        }
+        editor.Controls.Add(Field("方案名称", _name), 0, 0);
+        editor.Controls.Add(Field("完整模型名 / 别名（每行一个，保留中转前缀）", _aliases, 62), 0, 1);
+        _mode.Items.AddRange(["基础单价 × 倍率", "直接填写折后单价"]);
+        editor.Controls.Add(Field("计费方式", _mode), 0, 2);
+        _multiplier.PlaceholderText = "例如 0.35"; editor.Controls.Add(Field("倍率（折后单价模式固定为 1）", _multiplier), 0, 3);
+        var tiers = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3 };
+        tiers.ColumnStyles.Add(new(SizeType.Percent, 58)); tiers.ColumnStyles.Add(new(SizeType.Absolute, 52)); tiers.ColumnStyles.Add(new(SizeType.Percent, 42));
+        _twoTiers.Text = "启用双档价格"; _twoTiers.Dock = DockStyle.Fill;
+        tiers.Controls.Add(_twoTiers, 0, 0); tiers.Controls.Add(LabelFor("阈值"), 1, 0); tiers.Controls.Add(new FieldFrame(_threshold), 2, 0); editor.Controls.Add(tiers, 0, 4);
+        var rates = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 5, Margin = new(0, 8, 0, 4) };
+        rates.ColumnStyles.Add(new(SizeType.Percent, 28)); rates.ColumnStyles.Add(new(SizeType.Percent, 36)); rates.ColumnStyles.Add(new(SizeType.Percent, 36));
+        rates.RowStyles.Add(new(SizeType.Absolute, 32)); for (var i = 0; i < 4; i++) rates.RowStyles.Add(new(SizeType.Percent, 25));
+        rates.Controls.Add(LabelFor("USD / 1M tokens"), 0, 0); rates.Controls.Add(LabelFor("低档 / 统一价格"), 1, 0); rates.Controls.Add(LabelFor("高档（超过阈值）"), 2, 0);
         var names = new[] { "普通输入", "缓存读取", "缓存写入", "输出" };
-        for (var i = 0; i < 4; i++) { rates.Controls.Add(new Label { Text = names[i], AutoSize = true, Padding = new(0, 5, 0, 0) }, 0, i + 1); rates.Controls.Add(_low[i], 1, i + 1); rates.Controls.Add(_high[i], 2, i + 1); }
-        editor.Controls.Add(rates, 0, 6); editor.SetColumnSpan(rates, 2);
-        var note = new Label { AutoSize = true, MaximumSize = new(740, 0), Margin = new(0, 12, 0, 0), Text =
-            "单价可填 0；留空表示未配置。请用小数点填写数字。\n阈值包含缓存输入，整次调用按选中档位计费。缓存写入使用统一单价，不区分时长。\n保存后，所有已识别的历史调用将按当前价格重新估算；缺失记录不会补成零。" };
-        editor.Controls.Add(note, 0, 7); editor.SetColumnSpan(note, 2);
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 48, FlowDirection = FlowDirection.RightToLeft, Padding = new(8) };
-        var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel };
-        var save = new Button { Text = "保存并重算", Name = "SavePrices", Width = 115 };
-        save.Click += (_, _) => Save(); buttons.Controls.Add(cancel); buttons.Controls.Add(save);
-        Controls.Add(editor); Controls.Add(left); Controls.Add(buttons); CancelButton = cancel;
+        for (var i = 0; i < 4; i++)
+        {
+            _low[i].PlaceholderText = "未配置"; _high[i].PlaceholderText = "未配置";
+            rates.Controls.Add(LabelFor(names[i]), 0, i + 1); rates.Controls.Add(new FieldFrame(_low[i]), 1, i + 1); rates.Controls.Add(new FieldFrame(_high[i]), 2, i + 1);
+        }
+        editor.Controls.Add(rates, 0, 5);
+        editor.Controls.Add(new Label { Dock = DockStyle.Fill, Tag = "muted", Text = "单价可填 0；留空表示未配置。单价精度原样保留。\n每次调用按包含缓存的总输入分档，保存后重算历史费用。", AutoEllipsis = true, Padding = new(0, 6, 0, 0) }, 0, 6);
+        editor.Controls.Add(_error, 0, 7); scroll.Controls.Add(editor);
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 54, FlowDirection = FlowDirection.RightToLeft, Padding = new(0, 10, 0, 0) };
+        var save = new ModernButton { Text = "保存并重算", Name = "SavePrices", Kind = ButtonKind.Primary, Width = 126 };
+        var cancel = new ModernButton { Text = "取消", DialogResult = DialogResult.Cancel, Kind = ButtonKind.Secondary, Width = 82 };
+        save.Click += (_, _) => Save(); buttons.Controls.Add(save); buttons.Controls.Add(cancel);
+        Body.Controls.Add(scroll); Body.Controls.Add(left); Body.Controls.Add(buttons); CancelButton = cancel; AcceptButton = save;
         _list.SelectedIndexChanged += (_, _) => ChangeSelection();
         _mode.SelectedIndexChanged += (_, _) => { if (!_loading && _mode.SelectedIndex == 1) _multiplier.Text = "1"; _multiplier.Enabled = _mode.SelectedIndex == 0; };
         _twoTiers.CheckedChanged += (_, _) => UpdateTierEnabled();
-        RefreshList(_profiles.FirstOrDefault()?.Id);
-        if (_profiles.Count == 0) AddProfile();
+        _search.TextChanged += (_, _) => FilterProfiles();
+        RefreshList(_profiles.FirstOrDefault()?.Id); if (_profiles.Count == 0) AddProfile(); ApplyTheme(Palette);
+    }
+    private static Label LabelFor(string text) => new() { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Tag = "muted", AutoEllipsis = true, Margin = new(0, 0, 6, 0) };
+    private void DrawProfile(object? sender, DrawItemEventArgs e)
+    {
+        if (e.Index < 0) return; var selected = e.State.HasFlag(DrawItemState.Selected);
+        using var b = new SolidBrush(selected ? Palette.ToolbarOpen : Palette.Background); e.Graphics.FillRectangle(b, e.Bounds);
+        if (selected) { using var bar = new SolidBrush(Palette.Accent); e.Graphics.FillRectangle(bar, e.Bounds.Left, e.Bounds.Top + 7, 3, e.Bounds.Height - 14); }
+        var profile = (ModelPriceProfile)_list.Items[e.Index];
+        TextRenderer.DrawText(e.Graphics, profile.Name, e.Font, Rectangle.Inflate(e.Bounds, -12, 0), selected ? Palette.Value : Palette.Label, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+    }
+    private void FilterProfiles()
+    {
+        // Searching must never throw away an unsaved valid draft or switch to another profile.
+        if (_loading) return; if (!FlushCurrent(out var error)) { _error.Text = error; return; }
+        _error.Text = ""; RefreshList(_currentId);
     }
     private void UpdateTierEnabled() { _threshold.Enabled = _twoTiers.Checked; foreach (var box in _high) box.Enabled = _twoTiers.Checked; }
     private void RefreshList(string? selectedId)
     {
-        _loading = true; _list.Items.Clear(); _list.Items.AddRange(_profiles.Cast<object>().ToArray());
-        _list.SelectedIndex = _profiles.FindIndex(p => p.Id == selectedId); _loading = false;
+        _loading = true; _list.BeginUpdate(); _list.Items.Clear();
+        var query = _search.Text.Trim();
+        var shown = _profiles.Where(p => query.Length == 0 || p.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || p.Models.Any(m => m.Contains(query, StringComparison.OrdinalIgnoreCase))).ToArray();
+        _list.Items.AddRange(shown.Cast<object>().ToArray());
+        _list.SelectedIndex = Array.FindIndex(shown, p => p.Id == selectedId); _list.EndUpdate(); _loading = false;
         LoadProfile(_profiles.FirstOrDefault(p => p.Id == selectedId));
     }
     private void LoadProfile(ModelPriceProfile? profile)
@@ -113,11 +153,11 @@ internal sealed class ModelPriceForm : Form
         catch (FormatException e) { error = e.Message; return false; }
     }
     private bool FlushWithMessage()
-    { if (FlushCurrent(out var error)) return true; MessageBox.Show(this, error, "价格设置", MessageBoxButtons.OK, MessageBoxIcon.Information); return false; }
+    { if (FlushCurrent(out var error)) { _error.Text = ""; return true; } _error.Text = error; return false; }
     private void ChangeSelection()
     {
-        if (_loading) return; var next = (_list.SelectedItem as ModelPriceProfile)?.Id; if (next == _currentId) return;
-        if (!FlushWithMessage()) { _loading = true; _list.SelectedIndex = _profiles.FindIndex(p => p.Id == _currentId); _loading = false; return; }
+        if (_loading || _list.SelectedItem is not ModelPriceProfile selected) return; var next = selected.Id; if (next == _currentId) return;
+        if (!FlushWithMessage()) { _loading = true; _list.SelectedIndex = Enumerable.Range(0, _list.Items.Count).FirstOrDefault(i => ((ModelPriceProfile)_list.Items[i]).Id == _currentId, -1); _loading = false; return; }
         RefreshList(next);
     }
     private void AddProfile()
@@ -128,7 +168,7 @@ internal sealed class ModelPriceForm : Form
         if (existing is not null) { RefreshList(existing.Id); return; }
         var p = new ModelPriceProfile(Guid.NewGuid().ToString("N"), model.Length > 0 ? model : "新价格方案",
             model.Length > 0 ? new[] { model } : Array.Empty<string>(), PriceEntryMode.BaseWithMultiplier, 1m, true, 272_000, new(), new());
-        _profiles.Add(p); RefreshList(p.Id);
+        _profiles.Add(p); _loading = true; _search.Text = ""; _loading = false; RefreshList(p.Id);
     }
     private void RemoveProfile()
     { if (_currentId is null) return; _profiles.RemoveAll(p => p.Id == _currentId); RefreshList(_profiles.FirstOrDefault()?.Id); }
@@ -140,7 +180,7 @@ internal sealed class ModelPriceForm : Form
     private void Save()
     {
         if (!TryBuildSettings(out var settings, out var error) || !PricingStore.TrySave(settings, out error, _path))
-        { MessageBox.Show(this, error, "价格设置", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+        { _error.Text = error; return; }
         SavedSettings = settings; DialogResult = DialogResult.OK; Close();
     }
 }

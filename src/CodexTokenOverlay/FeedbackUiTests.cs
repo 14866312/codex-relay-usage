@@ -74,6 +74,24 @@ internal static class FeedbackUiTests
                 Check(theme + " hiding clears pointer and timer", !form.IsPointerPressed && !form.Capture && form.FeedbackFrame.Hover == 0 && !form.IsFeedbackTimerRunning);
                 form.Show(); Send(handle, 0x0202, inside);
                 Check(theme + " showing again cannot deliver stale click", clicks == 2);
+                form.ApplyLayout(expanded); form.FinishFeedbackAnimation();
+                var detailsClicks = 0; form.CostDetailsRequested += (_, _) => detailsClicks++;
+                var detailsButton = form.DetailsButtonBounds;
+                var detailPoint = new Point(detailsButton.Left + detailsButton.Width / 2, detailsButton.Top + detailsButton.Height / 2);
+                Send(handle, 0x0202, detailPoint);
+                Check(theme + " details button ignores unmatched release", detailsClicks == 0);
+                Send(handle, 0x0200, detailPoint); using var detailHover = Capture(form);
+                Send(handle, 0x0201, detailPoint, 1); using var detailPressed = Capture(form);
+                Check(theme + " details button shows press before action", form.Capture && PixelsDiffer(detailHover, detailPressed) && detailsClicks == 0);
+                Send(handle, 0x0200, outside, 1); Send(handle, 0x0202, outside);
+                Check(theme + " details outside release cancels action", detailsClicks == 0 && !form.Capture);
+                Send(handle, 0x0201, detailPoint, 1); form.Capture = false; Send(handle, 0x0202, detailPoint);
+                Check(theme + " details capture loss cancels action", detailsClicks == 0);
+                Send(handle, 0x0201, detailPoint, 1); Send(handle, 0x0202, detailPoint); Send(handle, 0x0202, detailPoint);
+                Check(theme + " details button opens exactly once", detailsClicks == 1 && clicks == 2);
+                var close = form.PanelCloseBounds; var closePoint = new Point(close.Left + close.Width / 2, close.Top + close.Height / 2);
+                Send(handle, 0x0201, closePoint, 1); Send(handle, 0x0202, closePoint); form.FinishFeedbackAnimation();
+                Check(theme + " panel close button collapses exactly once", clicks == 3 && form.CurrentLayout!.State == OverlayVisualState.Collapsed);
                 form.Hide();
             }
             using var reduced = new TokenStripForm(motionEnabled: false);
