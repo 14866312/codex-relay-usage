@@ -25,7 +25,8 @@ internal enum DisplayField
     Reasoning = 1 << 7,
     Thread = 1 << 8,
     CacheHitRate = 1 << 9,
-    Cost = 1 << 10
+    Cost = 1 << 10,
+    Speed = 1 << 11
 }
 
 internal enum CollapsedSlot { Primary, Secondary }
@@ -36,13 +37,13 @@ internal static class DisplayFieldRules
         DisplayField.Total | DisplayField.Input | DisplayField.Output |
         DisplayField.CacheHit | DisplayField.CacheMiss | DisplayField.Context |
         DisplayField.ContextPercent | DisplayField.Reasoning | DisplayField.Thread |
-        DisplayField.CacheHitRate | DisplayField.Cost;
+        DisplayField.CacheHitRate | DisplayField.Cost | DisplayField.Speed;
 
     public static readonly IReadOnlyList<DisplayField> Ordered = new[]
     {
         DisplayField.Total, DisplayField.CacheHitRate, DisplayField.CacheMiss, DisplayField.CacheHit,
         DisplayField.Output, DisplayField.Input, DisplayField.Context,
-        DisplayField.ContextPercent, DisplayField.Reasoning, DisplayField.Thread, DisplayField.Cost
+        DisplayField.ContextPercent, DisplayField.Speed, DisplayField.Reasoning, DisplayField.Thread, DisplayField.Cost
     };
 
     public static bool IsSingleSupported(DisplayField field)
@@ -83,7 +84,8 @@ internal sealed class OverlaySettings
         | DisplayField.CacheHit
         | DisplayField.CacheHitRate
         | DisplayField.CacheMiss
-        | DisplayField.ContextPercent;
+        | DisplayField.ContextPercent
+        | DisplayField.Speed;
 
     private sealed class PersistedSettings
     {
@@ -107,7 +109,7 @@ internal sealed class OverlaySettings
         public double? OffsetYDip { get; set; }
     }
 
-    public const int CurrentSettingsVersion = 3;
+    public const int CurrentSettingsVersion = 4;
     public string ThemeMode { get; set; } = "system";
     public string? SessionRoot { get; set; }
     public string? PinnedThreadId { get; set; }
@@ -191,7 +193,12 @@ internal sealed class OverlaySettings
             settings.OverlayScalePercent = ManualAttachmentRules.SanitizeScale(
                 persisted.OverlayScalePercent);
             var migratePlacement = !persisted.SettingsVersion.HasValue
-                || persisted.SettingsVersion.Value < CurrentSettingsVersion;
+                || persisted.SettingsVersion.Value < 3;
+            if (!persisted.SettingsVersion.HasValue || persisted.SettingsVersion.Value < 4)
+            {
+                // Version 4 adds the reported output speed to existing installations.
+                settings.VisibleFields |= DisplayField.Speed;
+            }
             if (migratePlacement)
             {
                 // Version 3 moves existing installations out of the input controls.

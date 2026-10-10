@@ -38,7 +38,7 @@ internal static class TitleBarPlacementTests
         check("position migration preserves non-position preferences",
             migration.Settings.ThemeMode == "dark" && migration.Settings.SessionRoot == temporaryDirectory
             && migration.Settings.PinnedThreadId == "synthetic-pin"
-            && migration.Settings.VisibleFields == (DisplayField)261
+            && migration.Settings.VisibleFields == ((DisplayField)261 | DisplayField.Speed)
             && migration.Settings.CollapsedPrimaryField == DisplayField.Reasoning
             && migration.Settings.CollapsedSecondaryField == DisplayField.CacheHitRate
             && migration.Settings.OverlayScalePercent == 110);
@@ -47,7 +47,7 @@ internal static class TitleBarPlacementTests
         var upgraded = OverlaySettings.Load(oldPath);
         var reread = OverlaySettings.ParseJson(File.ReadAllText(oldPath));
         check("migration is saved once and is idempotent", !reread.MustPersist
-            && reread.Settings.SettingsVersion == 3 && !upgraded.ManualPlacementEnabled);
+            && reread.Settings.SettingsVersion == 4 && !upgraded.ManualPlacementEnabled);
         var legacy = OverlaySettings.ParseJson(JsonSerializer.Serialize(new
         {
             ThemeMode = "light", SessionRoot = temporaryDirectory,

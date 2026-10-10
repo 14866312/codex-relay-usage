@@ -181,6 +181,7 @@ internal static class SessionCostTests
         check("completed half-line incrementally billed once", snapshot.Ledger!.Calls.Count == 2 && calculator.Calculate(snapshot.Ledger, prices).Amounts?.Total == .1345197m);
         File.AppendAllText(path, sample, encoding); snapshot = monitor.Poll(true)!;
         check("replayed older record cannot roll back aggregate", calculator.Calculate(snapshot.Ledger!, prices).Status == SessionCostStatus.Complete);
+        check("reported speed stays absent without a dated turn", snapshot.OutputSpeed is null);
         var archive = Path.Combine(archives, "test.jsonl"); File.Copy(path, archive); snapshot = monitor.Poll(true)!;
         check("active and archived copy billed once", monitor.ListSessions().Count == 1 && calculator.Calculate(snapshot.Ledger!, prices).Amounts?.Total == .1345197m);
         File.Delete(path); snapshot = monitor.Poll(true)!;
@@ -220,10 +221,10 @@ internal static class SessionCostTests
         var settings = OverlaySettings.CreateDefault(); settings.ManualPlacementEnabled = true; settings.OverlayScalePercent = 120;
         settings.VisibleFields |= DisplayField.Cost; settings.SelectCollapsedField(CollapsedSlot.Secondary, DisplayField.Cost);
         var settingsPath = Path.Combine(directory, "cost-settings.json"); settings.Save(settingsPath); var restored = OverlaySettings.Load(settingsPath);
-        check("1.1.0 retains top/manual placement and scaling", restored.SettingsVersion == 3 && restored.ManualPlacementEnabled && restored.OverlayScalePercent == 120 && restored.MainAttachment == settings.MainAttachment);
+        check("1.1.0 retains top/manual placement and scaling", restored.SettingsVersion == 4 && restored.ManualPlacementEnabled && restored.OverlayScalePercent == 120 && restored.MainAttachment == settings.MainAttachment);
         check("cost display field and compact selection persist", restored.VisibleFields.HasFlag(DisplayField.Cost) && restored.CollapsedSecondaryField == DisplayField.Cost);
         var r = SampleResult(); var shown = OverlayPresentationBuilder.Create(DiagnosticsRunner.Example(), DisplayField.Total, DisplayField.Cost, DisplayField.Cost, r);
-        check("expanded cost includes four components", shown.ExpandedRows.Count == 5 && shown.Secondary.HasValue && shown.EstimateText is not null && shown.IssueText is null);
+        check("expanded cost includes four components", shown.ExpandedRows.Count == 5 && shown.Secondary.HasValue && shown.IssueText is null);
         check("compact cost does not repeat label", OverlayPresentationBuilder.CompactText(shown.Secondary) == "估算 $0.067");
         var hidden = OverlayPresentationBuilder.Create(DiagnosticsRunner.Example(), DisplayField.Total, DisplayField.CacheHitRate, DisplayField.Output, r);
         check("hiding cost field also hides its four components", hidden.ExpandedRows.All(row => row.Field != DisplayField.Cost));

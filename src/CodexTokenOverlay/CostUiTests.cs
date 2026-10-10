@@ -74,11 +74,12 @@ internal static class CostUiTests
             var groups = Find<DataGridView>(details, "CostGroups"); var unpriced = Find<DataGridView>(details, "UnpricedCalls");
             Check("details window displays model group and exact amount", groups.Rows.Count == 1 &&
                 groups.Rows[0].Cells[8].Value?.ToString() == "$0.067");
-            Check("details summary names current pricing basis", Find<TextBox>(details, "CostNotes").Text.Contains("按当前配置"));
+            Check("details summary stays user-facing and compact", Find<Label>(details, "CostSummary").Text == "按当前配置估算");
             var bad = result with { Status = SessionCostStatus.Partial, Amounts = null, PricedCalls = 0, Groups = Array.Empty<CostGroup>(),
                 Unpriced = new[] { new EvaluatedCall(new(new("session", "unpriced"), "turn", "relay/unknown", SessionCostTests.SampleUsage, 1), null, "—", null, "模型未配置价格") } };
             details.SetResult(result.ThreadId, bad);
-            Check("details lists missing reason and model", unpriced.Rows.Count == 1 && unpriced.Rows[0].Cells[3].Value?.ToString() == "模型未配置价格");
+            Check("details lists missing reason and model", unpriced.Rows.Count == 1 && unpriced.Rows[0].Cells[2].Value?.ToString() == "模型未配置价格");
+            Check("unpriced tab hides internal request ids", unpriced.Columns.Cast<DataGridViewColumn>().All(c => c.Name != "请求 ID"));
             details.SetResult("new-thread", null);
             Check("details immediately clears old amount on switch", groups.Rows.Count == 0 && unpriced.Rows.Count == 0 && !Find<Label>(details, "CostSummary").Text.Contains("0.067"));
             Check("details clears stale tab counts on switch", Find<Button>(details, "PricedTab").Text == "已计价明细" && Find<Button>(details, "UnpricedTab").Text == "未计价原因" && Find<Label>(details, "CostAmount").Text == "—");

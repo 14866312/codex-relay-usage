@@ -37,6 +37,7 @@ internal static class SidebarIdentificationTests
 
     internal static void Run(Action<string, bool> check, string directory)
     {
+        SameTitleFollowTests(check);
         StructureTests(check); ProjectTests(check, directory); ResolverTests(check); PublicationTests(check);
     }
     private static void StructureTests(Action<string, bool> check)
@@ -158,6 +159,14 @@ internal static class SidebarIdentificationTests
         check("manual row binding rejects remote and cloud sessions", !resolver.TryBind(View(32), "remote", titles, projects, out _)
             && !resolver.TryBind(View(32), "cloud", titles, projects, out _));
         check("home pages do not inherit bindings", resolver.Resolve(View(30, title: "Codex"), titles, projects).ThreadId is null);
+        // The one-tap control is offered only for same-title ambiguity, never for a page
+        // that simply has no matching conversation yet.
+        var plainProjects = new LocalProjectIndex(); plainProjects.Load(State(), Home);
+        var ambiguous = new SidebarSessionResolver().Resolve(View(30), new Dictionary<string, string> { ["a"] = Title, ["b"] = Title }, plainProjects);
+        check("same-title ambiguity is reported for the identify control",
+            ambiguous.SameTitleAmbiguous && ambiguous.ThreadId is null && ambiguous.Error is not null);
+        var unmatched = new SidebarSessionResolver().Resolve(View(30, title: "没有对应会话的页面"), new Dictionary<string, string> { ["a"] = Title }, plainProjects);
+        check("unmatched page title does not offer the identify control", !unmatched.SameTitleAmbiguous);
     }
     private static void PublicationTests(Action<string, bool> check)
     {
@@ -185,5 +194,26 @@ internal static class SidebarIdentificationTests
         check("native-row A B A rejects original token and fee completion", !selection.TryPublish(first, snapshot, null)
             && !CostPublication.Matches(first, selection.Revision, snapshot, cost.PricingVersion, cost));
         check("identification method is visible in follow status", FollowSelection.Status(route, null).Contains("侧栏绑定") && FollowSelection.Status(route, "manual") == "手动锁定");
+    }
+
+    // Same-title conversations cannot be separated by title alone. Adopting the
+    // conversation Codex reports as followed is safe only when its own title matches
+    // the visible page; otherwise a stale report would bill the wrong conversation.
+    private static void SameTitleFollowTests(Action<string, bool> check)
+    {
+        var projects = new LocalProjectIndex();
+        var titles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id-a"] = Title, ["id-b"] = Title, ["other"] = "另一个标题"
+        };
+        check("same-title follow accepts the matching followed conversation",
+            SidebarSessionResolver.FollowedSameTitle(Title, "id-b", true, titles, projects) == "id-b");
+        check("same-title follow rejects a mismatched title",
+            SidebarSessionResolver.FollowedSameTitle(Title, "other", true, titles, projects) is null);
+        check("same-title follow rejects unknown and disconnected reports",
+            SidebarSessionResolver.FollowedSameTitle(Title, "missing", true, titles, projects) is null
+            && SidebarSessionResolver.FollowedSameTitle(Title, "id-a", false, titles, projects) is null);
+        check("same-title follow requires a visible page title",
+            SidebarSessionResolver.FollowedSameTitle(null, "id-a", true, titles, projects) is null);
     }
 }

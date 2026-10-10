@@ -113,6 +113,13 @@ internal static class DiagnosticsRunner
         string Meta(string id) => JsonSerializer.Serialize(new { type = "session_meta", payload = new { id, originator = "Codex Desktop", source = "vscode", cwd = "synthetic" } });
         string Event(object payload) => JsonSerializer.Serialize(new { timestamp = "2026-10-02T10:30:00Z", type = "event_msg", payload });
         string Usage(object total, object? last = null, object? window = null) => Event(new { type = "token_count", info = new { total_token_usage = total, last_token_usage = last, model_context_window = window } });
+        string Record(string timestamp, string response, long input, long cached, long output, long turnOutput) =>
+            JsonSerializer.Serialize(new { timestamp, type = "token_usage_record", payload = new
+            {
+                thread_id = "speed", session_id = "speed", response_id = response, turn_id = "turn-speed",
+                usage = new { input_tokens = input, cached_input_tokens = cached, cache_write_input_tokens = 0L, output_tokens = output, reasoning_output_tokens = 0L, total_tokens = input + output },
+                turn_token_usage = new { input_tokens = input, cached_input_tokens = cached, cache_write_input_tokens = 0L, output_tokens = turnOutput, reasoning_output_tokens = 0L, total_tokens = input + turnOutput }
+            } });
         void Append(string path, string text) => File.AppendAllText(path, text + (char)10, utf8);
         try
         {
@@ -135,6 +142,21 @@ internal static class DiagnosticsRunner
             Check("last call context, not lifetime", s.ContextPercent == 14);
             Check("turn id dedup", s.TurnCount == 2);
             Check("relay alias and UTF8 preserved", s.Model == "relay/中文-🤖");
+            Check("speed absent without dated usage records", s.OutputSpeed is null);
+            var speedPath = Path.Combine(directory, "sessions", "speed.jsonl");
+            File.WriteAllText(speedPath, Meta("speed") + (char)10, utf8);
+            Append(speedPath, JsonSerializer.Serialize(new { timestamp = "2026-10-02T10:00:00Z", type = "event_msg", payload = new { type = "task_started", turn_id = "turn-speed" } }));
+            Append(speedPath, Record("2026-10-02T10:00:10Z", "resp-1", 1_000, 0, 100, 100));
+            monitor.PreferredThreadId = "speed";
+            var speed = monitor.Poll(true)!;
+            Check("speed equals reported turn output per second", Math.Abs(speed.OutputSpeed!.Value - 10) < 0.001);
+            Append(speedPath, Record("2026-10-02T10:00:20Z", "resp-2", 1_100, 0, 50, 150));
+            speed = monitor.Poll(true)!;
+            Check("speed advances with the latest reported cumulative output", Math.Abs(speed.OutputSpeed!.Value - 7.5) < 0.001);
+            var speedPresentation = OverlayPresentationBuilder.Create(speed, DisplayField.Total, DisplayField.Speed,
+                DisplayField.Total | DisplayField.Speed);
+            Check("speed shown with unit and one decimal", speedPresentation.Secondary.Value == "7.5 tok/s" && speedPresentation.Secondary.HasValue);
+            monitor.PreferredThreadId = "a";
             var presentation = OverlayPresentationBuilder.Create(s, DisplayField.Total, DisplayField.CacheHitRate, OverlaySettings.CreateDefault().VisibleFields);
             Check("exact expanded total", presentation.Total!.Value == "4,956,088 tok");
             Check("expanded cached and uncached", presentation.ExpandedRows.Any(r => r.Value == "4,586,752 tok") && presentation.ExpandedRows.Any(r => r.Value == "290,371 tok"));

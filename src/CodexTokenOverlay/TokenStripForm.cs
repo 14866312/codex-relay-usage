@@ -143,6 +143,7 @@ internal sealed class TokenStripForm : Form
 
     public event EventHandler? CapsuleClicked;
     public event EventHandler? CostDetailsRequested;
+    public event EventHandler? IdentifyRequested;
     public event EventHandler<OverlayEditPreviewEventArgs>? EditPreviewChanged;
     public event EventHandler<OverlayEditPreviewEventArgs>? EditGestureCompleted;
     public event EventHandler? EditSaveRequested;
@@ -157,6 +158,21 @@ internal sealed class TokenStripForm : Form
     internal bool IsFeedbackTimerRunning => _animationTimer.Enabled;
     internal Rectangle DetailsButtonBounds => PanelActionBounds(false);
     internal Rectangle PanelCloseBounds => PanelActionBounds(true);
+    // Shown only while the visible page cannot be told apart from a same-title
+    // conversation. One press re-checks and adopts the page Codex is following.
+    internal Rectangle IdentifyButtonBounds => CapsuleIdentifyBounds();
+    internal bool IsIdentifyHovered => _panelHover == 3;
+    internal bool IsIdentifyPressed => _panelPressed == 3;
+    private Rectangle CapsuleIdentifyBounds()
+    {
+        if (IsEditMode || CurrentLayout is null || CurrentLayout.CapsuleBounds.IsEmpty || !_presentation.ShowIdentifyAction) return Rectangle.Empty;
+        var m = OverlayRenderMetrics.Create(CurrentLayout.Dpi, CurrentLayout.ScalePercent);
+        var content = Rectangle.Inflate(CurrentLayout.CapsuleBounds.ToRectangle(), -m.HorizontalPadding, 0);
+        content.Width = Math.Max(0, content.Width - Math.Max(5, m.EditHandleSize) - m.MetricGap);
+        var height = Math.Max(1, content.Height - m.MetricGap);
+        var width = Math.Min(content.Width, (m.HeaderHeight * 3) + m.MetricGap);
+        return new Rectangle(content.Right - width, content.Top + ((content.Height - height) / 2), width, height);
+    }
     private Rectangle PanelActionBounds(bool close)
     {
         if (IsEditMode || CurrentLayout is null || CurrentLayout.PanelBounds.IsEmpty) return Rectangle.Empty;
@@ -165,7 +181,12 @@ internal sealed class TokenStripForm : Form
         return close ? new(content.Right - m.HeaderHeight, content.Top, m.HeaderHeight, m.HeaderHeight)
             : new(content.Left, content.Bottom - m.HeaderHeight - m.ProgressVerticalGap, content.Width, m.HeaderHeight + m.ProgressVerticalGap);
     }
-    private int PanelActionAt(Point p) => !RevealedPanelBounds.Contains(p) ? 0 : PanelCloseBounds.Contains(p) ? 2 : DetailsButtonBounds.Contains(p) ? 1 : 0;
+    private int PanelActionAt(Point p)
+    {
+        var identify = IdentifyButtonBounds;
+        if (!identify.IsEmpty && identify.Contains(p)) return 3;
+        return !RevealedPanelBounds.Contains(p) ? 0 : PanelCloseBounds.Contains(p) ? 2 : DetailsButtonBounds.Contains(p) ? 1 : 0;
+    }
 
     internal int SetBoundsCoreCallCount { get; private set; }
     internal bool IsEditGestureActive => _editGesture is not null;
@@ -666,7 +687,12 @@ internal sealed class TokenStripForm : Form
         {
             var action = _panelPressed; var invoke = action == PanelActionAt(clientPoint); _panelPressed = 0;
             if (Capture) Capture = false; Invalidate();
-            if (invoke) { if (action == 1) CostDetailsRequested?.Invoke(this, EventArgs.Empty); else CapsuleClicked?.Invoke(this, EventArgs.Empty); }
+            if (invoke)
+            {
+                if (action == 1) CostDetailsRequested?.Invoke(this, EventArgs.Empty);
+                else if (action == 3) IdentifyRequested?.Invoke(this, EventArgs.Empty);
+                else CapsuleClicked?.Invoke(this, EventArgs.Empty);
+            }
             return;
         }
         var clicked = _feedback.Up(IsCapsulePoint(clientPoint), Environment.TickCount64, CanAnimate);
@@ -843,13 +869,17 @@ internal sealed class TokenStripForm : Form
         DrawChevron(graphics, chevronBounds, metrics);
         if (!string.IsNullOrWhiteSpace(_presentation.StatusText))
         {
+            var identify = IdentifyButtonBounds;
+            var statusBounds = identify.IsEmpty ? content : new Rectangle(
+                content.Left, content.Top, Math.Max(0, identify.Left - metrics.MetricGap - content.Left), content.Height);
             TextRenderer.DrawText(
                 graphics,
                 _presentation.StatusText,
                 labelFont,
-                content,
+                statusBounds,
                 _palette.Label,
-                TextFlags | TextFormatFlags.HorizontalCenter);
+                identify.IsEmpty ? TextFlags | TextFormatFlags.HorizontalCenter : TextFlags);
+            DrawIdentifyAction(graphics, labelFont, metrics);
             DrawEditHandle(graphics, dividerPen, metrics, decorations);
             return;
         }
@@ -857,19 +887,37 @@ internal sealed class TokenStripForm : Form
         if (layout.CollapsedDisplay == CollapsedDisplayMode.PrimaryOnly)
         {
             DrawCompactMetric(graphics, _presentation.Primary, content, labelFont, valueFont, metrics);
+            DrawIdentifyAction(graphics, labelFont, metrics);
             DrawEditHandle(graphics, dividerPen, metrics, decorations);
             return;
         }
 
         var pillText = OverlayPresentationBuilder.CompactText(_presentation.Primary) + " · " + OverlayPresentationBuilder.CompactText(_presentation.Secondary);
-        var extra = _presentation.ExtraText ?? "";
+        // The identify action takes the right slot; the round/context text yields so the
+        // two never draw on top of each other in the fixed-width capsule.
+        var extra = IdentifyButtonBounds.IsEmpty ? _presentation.ExtraText ?? "" : "";
         var extraWidth = Math.Min(content.Width / 2, TextRenderer.MeasureText(graphics, extra, labelFont, Size.Empty, TextFormatFlags.NoPadding).Width + metrics.MetricGap);
         var pillBounds = new Rectangle(content.X + metrics.HeaderHeight, content.Y, content.Width - extraWidth - metrics.HeaderHeight, content.Height);
         using var iconPen = new Pen(_palette.Label, metrics.StrokeWidth);
         UiIcons.Draw(graphics, UiGlyph.Chart, new Rectangle(content.X, content.Y + (content.Height - metrics.DividerHeight) / 2, metrics.DividerHeight, metrics.DividerHeight), _palette.Label, _palette.Accent);
         TextRenderer.DrawText(graphics, pillText, labelFont, pillBounds, _palette.Value, TextFlags);
         TextRenderer.DrawText(graphics, extra, labelFont, new Rectangle(content.Right - extraWidth, content.Y, extraWidth, content.Height), _palette.Label, TextFlags | TextFormatFlags.Right);
+        DrawIdentifyAction(graphics, labelFont, metrics);
         DrawEditHandle(graphics, dividerPen, metrics, decorations);
+    }
+    private void DrawIdentifyAction(Graphics graphics, Font font, OverlayRenderMetrics metrics)
+    {
+        var bounds = IdentifyButtonBounds;
+        if (bounds.IsEmpty) return;
+        var hovered = _panelHover == 3; var pressed = _panelPressed == 3 && hovered;
+        if (hovered)
+        {
+            using var brush = new SolidBrush(pressed ? _palette.ToolbarPressed : _palette.ToolbarHover);
+            using var path = UiDrawing.Round(bounds, metrics.CapsuleRadius);
+            graphics.FillPath(brush, path);
+        }
+        if (pressed) bounds.Offset(0, metrics.StrokeWidth);
+        TextRenderer.DrawText(graphics, "自动识别", font, bounds, _palette.Accent, TextFlags | TextFormatFlags.HorizontalCenter);
     }
 
     private void DrawChevron(Graphics graphics, Rectangle bounds, OverlayRenderMetrics metrics)

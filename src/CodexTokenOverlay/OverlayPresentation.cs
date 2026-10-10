@@ -7,7 +7,8 @@ internal sealed record OverlayPresentation(
     OverlayMetric Primary, OverlayMetric Secondary, IReadOnlyList<OverlayMetric> ExpandedRows,
     double ContextPercent, bool ShowContextProgress, string? StatusText,
     OverlayMetric? Total = null, string? ExtraText = null, string? ModelText = null,
-    string? SourceText = null, string? FollowText = null, string? IssueText = null, string? EstimateText = null);
+    string? SourceText = null, string? FollowText = null, string? IssueText = null, string? EstimateText = null,
+    bool ShowIdentifyAction = false);
 
 internal static class OverlayPresentationBuilder
 {
@@ -63,9 +64,17 @@ internal static class OverlayPresentationBuilder
             DisplayField.ContextPercent => Percent(s.ContextPercent),
             DisplayField.Thread => ShortThreadId(s.ThreadId),
             DisplayField.Cost => CostFormatting.Summary(cost, compact),
+            DisplayField.Speed => s.OutputSpeed is { } speed && speed > 0
+                ? speed.ToString(speed >= 100 ? "0" : speed >= 10 ? "0.#" : "0.##", Invariant) + " tok/s" : "— / 未提供",
             _ => "—"
         };
-        return new(field, labels.Compact, labels.Full, value, field == DisplayField.Cost ? cost?.Amounts is not null : !value.Contains('—') && value != "异常");
+        var hasValue = field switch
+        {
+            DisplayField.Cost => cost?.Amounts is not null,
+            DisplayField.Speed => s.OutputSpeed is > 0,
+            _ => !value.Contains('—') && value != "异常"
+        };
+        return new(field, labels.Compact, labels.Full, value, hasValue);
     }
     public static string Percent(double? percent) => percent.HasValue ? percent.Value.ToString("0", Invariant) + "%" : "—";
     public static string FormatTokenCount(long? value) => value switch
@@ -94,6 +103,7 @@ internal static class OverlayPresentationBuilder
         DisplayField.ContextPercent => ("上下文", "上下文占用（最近调用估算）"),
         DisplayField.Reasoning => ("推理", "推理输出（已含在输出）"), DisplayField.Thread => ("会话", "会话"),
         DisplayField.Cost => ("费用", "会话费用估算"),
+        DisplayField.Speed => ("速度", "输出速度（本轮平均）"),
         _ => throw new ArgumentOutOfRangeException(nameof(f))
     };
     private static string Clean(string text) => new(text.Where(c => !char.IsControl(c)).ToArray());

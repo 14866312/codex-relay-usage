@@ -163,6 +163,7 @@ internal sealed class SessionTitleIndex
 internal sealed class CodexVisibleThreadMonitor : IDisposable
 {
     private sealed record BindingRequest(SidebarBindingTarget Target, string ThreadId, TaskCompletionSource<string?> Completion);
+    private sealed record IdentifyRequest(TaskCompletionSource<string?> Completion);
     private readonly object _sync = new();
     private readonly CodexIpcActiveThreadMonitor _ipc = new();
     private readonly CancellationTokenSource _cancellation = new();
@@ -173,6 +174,7 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
     private long _rootRevision;
     private CodexViewIdentity? _view;
     private BindingRequest? _bindingRequest;
+    private IdentifyRequest? _identifyRequest;
     private long _lastReadTimestamp = Stopwatch.GetTimestamp();
     private int _disposed;
     public event Action? StatusChanged;
@@ -241,6 +243,32 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
             }
         }
     }
+    // One press for same-title conversations: re-read the visible page, then adopt the
+    // conversation Codex itself is following when its title matches that page.
+    public async Task<string?> IdentifyVisibleAsync()
+    {
+        IdentifyRequest request;
+        lock (_sync)
+        {
+            if (_disposed != 0) return "工具已退出";
+            _identifyRequest?.Completion.TrySetResult("识别操作已被更新的操作替换");
+            request = new(new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously));
+            _identifyRequest = request;
+        }
+        _wake.Set();
+        try { return await request.Completion.Task.WaitAsync(TimeSpan.FromSeconds(4)).ConfigureAwait(false); }
+        catch (TimeoutException)
+        {
+            lock (_sync)
+            {
+                if (request.Completion.Task.IsCompletedSuccessfully) return request.Completion.Task.Result;
+                if (ReferenceEquals(_identifyRequest, request)) _identifyRequest = null;
+                const string error = "当前页面核对超时，请稍后重新识别";
+                request.Completion.TrySetResult(error);
+                return error;
+            }
+        }
+    }
     internal static ActiveThreadRouteStatus Advance(ActiveThreadRouteStatus previous, ActiveThreadRouteStatus next)
     {
         next = next with { Version = previous.Version };
@@ -302,10 +330,34 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                             request.Completion.TrySetResult(bindError);
                         }
                     }
+                    IdentifyRequest? identify;
+                    lock (_sync) { identify = _identifyRequest; _identifyRequest = null; }
+                    if (identify is not null)
+                    {
+                        var identifyError = "当前页面暂时无法核对，请稍后重试";
+                        if (view.Error is not null) identifyError = view.Error;
+                        else if (view.WindowCount != 1) identifyError = "仅支持一个 Codex 主窗口";
+                        else if (!ipc.IsConnected || ipc.ThreadId is null) identifyError = "Codex 页面跟随未连接，请切换一次对话后重试";
+                        else if (SidebarSessionResolver.FollowedSameTitle(view.Title, ipc.ThreadId, ipc.IsConnected, index.Titles, projects) is null)
+                            identifyError = "当前页面与跟随对话不一致，请切换一次对话后重试";
+                        else if (!resolver.TryBind(view, ipc.ThreadId, index.Titles, projects, out var bindError))
+                            identifyError = bindError ?? "当前侧栏无法稳定识别，请打开侧栏后重试";
+                        else identifyError = null;
+                        identify.Completion.TrySetResult(identifyError);
+                    }
                     var resolved = resolver.Resolve(view, index.Titles, projects);
                     var id = ipc.IsConnected ? resolved.ThreadId : null;
+                    var method = resolved.Method;
+                    // Same-title conversations cannot be told apart by title alone. Codex IPC
+                    // reports the conversation the app is actually following; accept it only
+                    // when its own title matches the visible page, so a stale report cannot
+                    // silently substitute a different conversation.
+                    if (id is null && SidebarSessionResolver.FollowedSameTitle(view.Title, ipc.ThreadId, ipc.IsConnected, index.Titles, projects) is { } followed)
+                    {
+                        id = followed; method = "页面跟随";
+                    }
                     var error = view.Error ?? (id is null && view.WindowCount == 1 ? index.Error ?? resolved.Error : null);
-                    next = new(id, view.WindowCount, ipc.IsConnected, 0, error, key, resolved.Method);
+                    next = new(id, view.WindowCount, ipc.IsConnected, 0, error, key, method, resolved.SameTitleAmbiguous);
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or COMException or InvalidOperationException)
                 {

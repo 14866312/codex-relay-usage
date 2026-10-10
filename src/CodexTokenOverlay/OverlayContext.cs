@@ -45,6 +45,7 @@ internal sealed class OverlayContext : ApplicationContext
     private TokenSnapshot? _lastSnapshot => _selection.Snapshot;
     private bool _manuallyHidden;
     private bool _bindingPickerOpen;
+    private bool _identifyInFlight;
     private int _pollInFlight;
     private int _disposed;
     private int _logRefreshQueued;
@@ -239,6 +240,7 @@ internal sealed class OverlayContext : ApplicationContext
         _form.SetPresentation(_presentation);
         _form.CapsuleClicked += HandleCapsuleClicked;
         _form.CostDetailsRequested += (_, _) => ShowCostDetails();
+        _form.IdentifyRequested += async (_, _) => await IdentifyVisibleSessionAsync();
         _form.EditPreviewChanged += HandleEditPreviewChanged;
         _form.EditGestureCompleted += HandleEditGestureCompleted;
         _form.EditSaveRequested += (_, _) => SaveManualEditing();
@@ -660,6 +662,15 @@ internal sealed class OverlayContext : ApplicationContext
             ? OverlayPresentationBuilder.CreateWaiting(waiting, _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField, _settings.VisibleFields)
             : OverlayPresentationBuilder.Create(_lastSnapshot, _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField, _settings.VisibleFields, _cost);
         _presentation = _presentation with { FollowText = following + (_pendingError is not null && _pendingThreadId is not null ? " · " + _pendingError : "") };
+        // Offer the one-tap identification only while the visible page is genuinely
+        // unresolved, so the control never appears when following already works.
+        _presentation = _presentation with
+        {
+            // Only same-title ambiguity gets the one-tap identification. A page that
+            // simply cannot be read yet must not offer a control that cannot resolve it.
+            ShowIdentifyAction = _manualThreadId is null && _pendingThreadId is null
+                && _pendingRouteStatus.SameTitleAmbiguous
+        };
         _form.SetPresentation(_presentation);
         _costDetails?.SetResult(_pendingThreadId, _cost);
     }
@@ -766,6 +777,32 @@ internal sealed class OverlayContext : ApplicationContext
                 if (_currentTarget is not null) SetForegroundWindow(_currentTarget.HostWindow.Handle);
                 Tick();
             }
+        }
+    }
+
+    // One press for same-title conversations: adopt the page Codex is actually following
+    // instead of asking the user to pick a row from an ambiguous list.
+    private async Task IdentifyVisibleSessionAsync()
+    {
+        if (_identifyInFlight) return;
+        _identifyInFlight = true;
+        try
+        {
+            var error = await _routeMonitor.IdentifyVisibleAsync();
+            if (Volatile.Read(ref _disposed) != 0) return;
+            if (error is not null)
+                _trayIcon.ShowBalloonTip(5000, "未能自动识别当前对话", error, ToolTipIcon.Info);
+            else
+            {
+                _manualThreadId = null; _settings.PinnedThreadId = null;
+                _pinSessionMenuItem.Checked = false; _settings.Save(_settingsPath); _selectionRevision++;
+                _trayIcon.ShowBalloonTip(4000, "已识别当前对话", "已按 Codex 正在跟随的对话统计，切换对话后继续自动跟随。", ToolTipIcon.Info);
+            }
+        }
+        finally
+        {
+            _identifyInFlight = false;
+            if (Volatile.Read(ref _disposed) == 0) Tick();
         }
     }
 

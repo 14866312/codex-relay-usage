@@ -47,6 +47,29 @@ internal static class FeedbackUiTests
                 using var pressed = Capture(form);
                 Check(theme + " mouse down is visible before opening", form.IsPointerPressed && form.Capture && PixelsDiffer(hover, pressed) && clicks == 0);
                 SaveStates(previewDirectory, theme, normal, hover, pressed);
+                // The one-tap identification appears only while the visible page is unresolved.
+                var identify = form.CurrentPresentation with { ShowIdentifyAction = true };
+                form.SetPresentation(identify); form.ApplyLayout(collapsed); Application.DoEvents();
+                var identifyBounds = form.IdentifyButtonBounds;
+                Check(theme + " identify action is offered while the page is unresolved", !identifyBounds.IsEmpty
+                    && collapsed.CapsuleBounds.Contains(identifyBounds.Left, identifyBounds.Top));
+                var identifyClicks = 0; var opens = 0;
+                form.IdentifyRequested += (_, _) => identifyClicks++;
+                form.CapsuleClicked += (_, _) => opens++;
+                var identifyPoint = new Point(identifyBounds.X + identifyBounds.Width / 2, identifyBounds.Y + identifyBounds.Height / 2);
+                Send(handle, 0x0200, identifyPoint, 1);
+                if (previewDirectory is not null) Save(form, Path.Combine(previewDirectory, theme.ToString().ToLowerInvariant() + "-toolbar-identify.png"));
+                Check(theme + " identify action shows hover feedback", form.IsIdentifyHovered && form.Cursor == Cursors.Hand);
+                Send(handle, 0x0201, identifyPoint, 1);
+                Check(theme + " identify action shows pressed feedback", form.IsIdentifyPressed && form.Capture);
+                Send(handle, 0x0202, identifyPoint);
+                Check(theme + " identify press fires once without expanding", identifyClicks == 1 && opens == 0
+                    && form.CurrentLayout!.State == OverlayVisualState.Collapsed);
+                Send(handle, 0x0201, identifyPoint, 1); Send(handle, 0x0202, outside);
+                Check(theme + " identify release outside cancels", identifyClicks == 1);
+                form.SetPresentation(form.CurrentPresentation with { ShowIdentifyAction = false });
+                Check(theme + " identify action hides when the page resolves", form.IdentifyButtonBounds.IsEmpty);
+                form.ApplyLayout(collapsed); Application.DoEvents();
                 Send(handle, 0x0200, outside, 1);
                 Check(theme + " dragging outside removes pressed appearance", form.FeedbackFrame.Press == 0);
                 Send(handle, 0x0202, outside); form.FinishFeedbackAnimation();

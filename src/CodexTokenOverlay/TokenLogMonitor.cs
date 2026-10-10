@@ -203,6 +203,9 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
     private readonly HashSet<string> _runningTurns = new(StringComparer.Ordinal);
     private bool _skipLine, _usageRecorded, _totalTokenInvalid;
     private DateTime _writeUtc, _creationUtc, _updatedUtc;
+    private DateTime _turnStartUtc, _lastRecordUtc;
+    private string? _lastRecordTurn;
+    private double _speedOutput, _speedSeconds;
     private long? _total, _input, _cache, _output, _reasoning, _contextUsed, _contextWindow;
     private string? _model, _parseIssue;
     private SessionUsageLedger _ledger = new(threadId);
@@ -253,7 +256,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
             _contextUsed, _contextWindow, _updatedUtc, _model, _turns.Count,
             issues.Length == 0 ? live?.ParseIssue : string.Join("；", issues), _usageRecorded || live is not null,
             live is null ? _totalTokenInvalid : live.ParseIssue?.Contains("total_tokens", StringComparison.Ordinal) == true, ledger,
-            _runningTurns.Count > 0, _liveUsage.Source);
+            _runningTurns.Count > 0, _liveUsage.Source, OutputSpeed);
         _snapshotOffset = _offset;
         return Snapshot;
     }
@@ -269,6 +272,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
         _snapshotOffset = -1;
         _total = _input = _cache = _output = _reasoning = _contextUsed = _contextWindow = null;
         _model = _parseIssue = null; _updatedUtc = default; Snapshot = null;
+        _turnStartUtc = _lastRecordUtc = default; _lastRecordTurn = null; _speedOutput = 0; _speedSeconds = 0;
         _ledger = new(threadId);
         _liveUsage = new(); _runningTurns.Clear();
     }
@@ -294,6 +298,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
                         .All(value => !string.IsNullOrWhiteSpace(value));
                     _liveUsage.Observe(usageRecord, aggregate, hasIdentity);
                     _contextUsed = usageRecord.Total ?? TokenSnapshot.Sum(usageRecord.Input, usageRecord.Output);
+                    ObserveSpeed(root, payload, usageRecord);
                     UpdateTimestamp(root);
                 }
                 return;
@@ -304,6 +309,8 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
             {
                 var turn = String(payload, "turn_id");
                 if (turn is not null) { _turns.Add(turn); _runningTurns.Add(turn); }
+                _turnStartUtc = Timestamp(root) ?? default;
+                _lastRecordUtc = default; _lastRecordTurn = turn;
                 return;
             }
             if (eventType is "task_complete" or "task_completed" or "turn_aborted")
@@ -336,9 +343,32 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
     }
     private void UpdateTimestamp(JsonElement root)
     {
-        if (DateTime.TryParse(String(root, "timestamp"), null, System.Globalization.DateTimeStyles.RoundtripKind, out var stamp))
-            _updatedUtc = stamp.ToUniversalTime();
+        if (Timestamp(root) is { } stamp) _updatedUtc = stamp;
     }
+    private static DateTime? Timestamp(JsonElement root) =>
+        DateTime.TryParse(String(root, "timestamp"), null, System.Globalization.DateTimeStyles.RoundtripKind, out var stamp)
+            ? stamp.ToUniversalTime() : null;
+    // Average reported output per wall-clock second of the current turn. Only a reported
+    // usage record advances this value; the log has no per-token stream to count.
+    private void ObserveSpeed(JsonElement root, JsonElement payload, UsageAmounts usageRecord)
+    {
+        var turn = String(payload, "turn_id");
+        var stamp = Timestamp(root);
+        if (stamp is null) return;
+        if (_turnStartUtc == default || (turn is not null && _lastRecordTurn is not null && turn != _lastRecordTurn))
+        {
+            _turnStartUtc = stamp.Value; _lastRecordUtc = default; _speedOutput = 0; _speedSeconds = 0;
+        }
+        _lastRecordTurn = turn ?? _lastRecordTurn;
+        var turnOutput = usageRecord.Output;
+        if (payload.TryGetProperty("turn_token_usage", out var reported) && reported.ValueKind == JsonValueKind.Object)
+            turnOutput = Number(reported, "output_tokens", []) ?? turnOutput;
+        if (turnOutput is not { } output || output < 0) return;
+        var elapsed = (stamp.Value - _turnStartUtc).TotalSeconds;
+        if (elapsed < 1) return;
+        _lastRecordUtc = stamp.Value; _speedOutput = output; _speedSeconds = elapsed;
+    }
+    private double? OutputSpeed => _speedSeconds >= 1 && _speedOutput > 0 ? _speedOutput / _speedSeconds : null;
     internal static string? String(JsonElement element, string name) => element.ValueKind == JsonValueKind.Object &&
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
     private static long? Number(JsonElement element, string name, List<string> issues)

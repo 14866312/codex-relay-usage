@@ -4,7 +4,7 @@ Add-Type -AssemblyName System.Drawing
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 if (-not $PreviewDirectory) { $PreviewDirectory = Join-Path $repositoryRoot 'previews' }
 $PreviewDirectory = [IO.Path]::GetFullPath($PreviewDirectory)
-$canvas = [Drawing.Bitmap]::new(2440, 3110)
+$canvas = [Drawing.Bitmap]::new(2440, 3260)
 $graphics = [Drawing.Graphics]::FromImage($canvas)
 $titleFont = [Drawing.Font]::new('Microsoft YaHei UI', 34, [Drawing.FontStyle]::Bold, [Drawing.GraphicsUnit]::Pixel)
 $sectionFont = [Drawing.Font]::new('Microsoft YaHei UI', 24, [Drawing.FontStyle]::Bold, [Drawing.GraphicsUnit]::Pixel)
@@ -44,7 +44,7 @@ try {
     $icon = [Drawing.Image]::FromFile((Join-Path $repositoryRoot 'src/CodexTokenOverlay/Assets/app.png'))
     try { $graphics.DrawImage($icon, [Drawing.Rectangle]::new(40, 34, 96, 96)) } finally { $icon.Dispose() }
     $graphics.DrawString('Codex 用量助手', $titleFont, $ink, [single]158, [single]38)
-    $graphics.DrawString('Codex Usage Assistant 1.2.0 · 实际界面预览', $noteFont, $muted, [single]160, [single]88)
+    $graphics.DrawString('Codex Usage Assistant 1.3.0 · 实际界面预览', $noteFont, $muted, [single]160, [single]88)
     $graphics.DrawString('浅色 / 深色 · 用量与费用 · 登录启动 · 保留原配置', $noteFont, $muted, [single]1520, [single]88)
     Draw-Card '浅色 · 悬浮条与展开卡片' 40 180 720 870
     Draw-Preview 'light-expanded-cost.png' 64 252 672 770
@@ -63,11 +63,13 @@ try {
     Draw-Preview 'cost-details.png' 64 2066 1112 570
     Draw-Card '费用明细 · 深色主题' 1240 2000 1160 665
     Draw-Preview 'cost-details-dark.png' 1264 2066 1112 570
-    Draw-Card '默认 / 鼠标悬停 / 按住鼠标' 40 2705 1160 340
-    Draw-Preview 'light-toolbar-states.png' 64 2767 1112 254
-    Draw-Card '默认 / 鼠标悬停 / 按住鼠标 · 深色' 1240 2705 1160 340
-    Draw-Preview 'dark-toolbar-states.png' 1264 2767 1112 254
-    $graphics.DrawString('全部预览来自程序真实窗体，使用合成数据；费用金额显示三位小数。', $noteFont, $muted, [single]40, [single]3070)
+    Draw-Card '默认 / 鼠标悬停 / 按住鼠标 / 同名对话自动识别' 40 2705 1160 470
+    Draw-Preview 'light-toolbar-states.png' 64 2767 548 254
+    Draw-Preview 'light-toolbar-identify.png' 628 2767 548 254
+    Draw-Card '默认 / 鼠标悬停 / 按住鼠标 / 同名对话自动识别 · 深色' 1240 2705 1160 470
+    Draw-Preview 'dark-toolbar-states.png' 1264 2767 548 254
+    Draw-Preview 'dark-toolbar-identify.png' 1828 2767 548 254
+    $graphics.DrawString('全部预览来自程序真实窗体，使用合成数据；费用金额显示三位小数。', $noteFont, $muted, [single]40, [single]3195)
     $canvas.Save((Join-Path $PreviewDirectory 'overview.png'), [Drawing.Imaging.ImageFormat]::Png)
 } finally {
     foreach ($resource in @($graphics, $canvas, $titleFont, $sectionFont, $noteFont, $ink, $muted, $surface, $border)) { $resource.Dispose() }

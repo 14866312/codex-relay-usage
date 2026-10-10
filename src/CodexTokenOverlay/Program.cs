@@ -88,7 +88,7 @@ internal sealed record ActiveThreadRouteStatus(
     int ActiveWindowCount,
     bool IsConnected,
     long Version,
-    string? LastError, string? ViewKey = null, string? Identification = null);
+    string? LastError, string? ViewKey = null, string? Identification = null, bool SameTitleAmbiguous = false);
 
 internal sealed class CodexIpcActiveThreadMonitor : IDisposable
 {

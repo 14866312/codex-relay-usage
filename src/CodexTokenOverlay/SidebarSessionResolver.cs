@@ -91,7 +91,7 @@ internal sealed class LocalProjectIndex
     private void Clear() { _labels.Clear(); _canonical.Clear(); _assignments.Clear(); _remote.Clear(); }
 }
 
-internal sealed record VisibleSessionResolution(string? ThreadId, string? Error, string? Method = null);
+internal sealed record VisibleSessionResolution(string? ThreadId, string? Error, string? Method = null, bool SameTitleAmbiguous = false);
 internal sealed record SidebarBindingTarget(long RootRevision, long ViewVersion, string ViewKey, string Title)
 {
     public bool Matches(long rootRevision, long viewVersion, CodexViewIdentity view, bool connected) => connected
@@ -106,6 +106,15 @@ internal sealed class SidebarSessionResolver
     public void Reset() { _bindings.Clear(); _owner = null; }
     internal static string ViewKey(CodexViewIdentity view) => view.Sidebar is { Rows.Count: > 0 } sidebar
         ? sidebar.Key : $"{view.DocumentKey}/{view.ThreadId}/{view.Title}";
+    // Same-title conversations cannot be separated by title. Codex IPC reports the
+    // conversation the app is actually following, so adopt it only when its own title
+    // matches the visible page; a stale or unrelated report must never be substituted.
+    internal static string? FollowedSameTitle(string? pageTitle, string? followed, bool connected,
+        IReadOnlyDictionary<string, string> titles, LocalProjectIndex projects) =>
+        connected && !string.IsNullOrWhiteSpace(followed) && pageTitle is { Length: > 0 }
+        && titles.TryGetValue(followed!, out var followedTitle) && followedTitle == pageTitle
+        && !projects.IsRemote(followed!)
+            ? followed : null;
     private void ObserveOwner(CodexViewIdentity view)
     {
         if (_owner == view.DocumentKey) return;
@@ -158,9 +167,12 @@ internal sealed class SidebarSessionResolver
             var method = rows.Select(r => _bindings.GetValueOrDefault(r.NodeId)).First(b => b?.ThreadId == id)!.Method;
             return new(id, null, method);
         }
-        if (incomplete) return new(null, "同名会话的项目归属不完整，可绑定当前对话");
+        if (incomplete) return new(null, "同名会话的项目归属不完整，可绑定当前对话", SameTitleAmbiguous: true);
         if (candidates.Length != 1 || projects.IsRemote(candidates[0]))
-            return new(null, rows.Count > 0 ? "同名对话无法唯一识别，可绑定当前对话" : "当前页面标题无法唯一匹配会话");
+            return new(null, rows.Count > 0 ? "同名对话无法唯一识别，可绑定当前对话" : "当前页面标题无法唯一匹配会话",
+                // Only several conversations sharing the page title can be resolved by
+                // following the page; a title with no conversation at all cannot.
+                SameTitleAmbiguous: candidates.Length > 1);
         var source = scope is not null ? "侧栏项目" : rows.Count > 0 ? "侧栏识别" : "唯一标题";
         Remember(view, candidates[0], projects, source);
         return new(candidates[0], null, source);

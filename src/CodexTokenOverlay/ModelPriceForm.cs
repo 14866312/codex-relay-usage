@@ -76,7 +76,7 @@ internal sealed class ModelPriceForm : ModernDialog
             rates.Controls.Add(LabelFor(names[i]), 0, i + 1); rates.Controls.Add(new FieldFrame(_low[i]), 1, i + 1); rates.Controls.Add(new FieldFrame(_high[i]), 2, i + 1);
         }
         editor.Controls.Add(rates, 0, 5);
-        editor.Controls.Add(new Label { Dock = DockStyle.Fill, Tag = "muted", Text = "单价可填 0；留空表示未配置。单价精度原样保留。\n每次调用按包含缓存的总输入分档，保存后重算历史费用。", AutoEllipsis = true, Padding = new(0, 6, 0, 0) }, 0, 6);
+        editor.Controls.Add(new Label { Dock = DockStyle.Fill, Tag = "muted", Text = "单价可填 0；留空表示未配置。保存后按当前价格重新计算本会话费用。", AutoEllipsis = true, Padding = new(0, 6, 0, 0) }, 0, 6);
         editor.Controls.Add(_error, 0, 7); scroll.Controls.Add(editor);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 54, FlowDirection = FlowDirection.RightToLeft, Padding = new(0, 10, 0, 0) };
         var save = new ModernButton { Text = "保存并重算", Name = "SavePrices", Kind = ButtonKind.Primary, Width = 126 };
