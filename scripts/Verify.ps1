@@ -56,6 +56,10 @@ $feedbackUiPath = Join-Path $outputRoot "feedback-ui.json"
 Invoke-Probe -Arguments @("--feedback-ui-probe", $feedbackUiPath)
 $feedbackUi = Get-Content -LiteralPath $feedbackUiPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($feedbackUi.Failed -ne 0) { throw "工具栏交互检查失败，请查看 $feedbackUiPath" }
+$clipboardPath = Join-Path $outputRoot "clipboard-ui.json"
+Invoke-Probe -Arguments @("--clipboard-ui-probe", $clipboardPath)
+$clipboard = Get-Content -LiteralPath $clipboardPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($clipboard.Failed -ne 0) { throw "剪贴板恢复检查失败，请查看 $clipboardPath" }
 $liveUiPath = Join-Path $outputRoot "live-ui.json"
 Invoke-Probe -Arguments @("--live-ui-probe", $liveUiPath)
 $liveUi = Get-Content -LiteralPath $liveUiPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -104,6 +108,8 @@ $summary = [pscustomobject]@{
     CostUiFailed = $costUi.Failed
     FeedbackUiPassed = $feedbackUi.Passed
     FeedbackUiFailed = $feedbackUi.Failed
+    ClipboardPassed = $clipboard.Passed
+    ClipboardFailed = $clipboard.Failed
     LiveUiPassed = $liveUi.Passed
     LiveUiFailed = $liveUi.Failed
     LogAppendToPublication = $liveUi.LogAppendToPublication
@@ -113,4 +119,4 @@ $summary = [pscustomobject]@{
 }
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outputRoot "verification.json") -Encoding UTF8
 if ($failed -gt 0) { throw "原生窗口测试失败，请查看 $outputRoot" }
-Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、$($costUi.Passed) 项费用窗口检查、$($feedbackUi.Passed) 项工具栏交互检查、$($liveUi.Passed) 项实时更新及跟随检查、$($startup.Passed) 项启动设置检查、$($console.Passed) 项无控制台检查、x64 GUI PE。"
+Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、$($costUi.Passed) 项费用窗口检查、$($feedbackUi.Passed) 项工具栏交互检查、$($clipboard.Passed) 项剪贴板恢复检查、$($liveUi.Passed) 项实时更新及跟随检查、$($startup.Passed) 项启动设置检查、$($console.Passed) 项无控制台检查、x64 GUI PE。"

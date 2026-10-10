@@ -37,7 +37,8 @@ internal static class SidebarIdentificationTests
 
     internal static void Run(Action<string, bool> check, string directory)
     {
-        SameTitleFollowTests(check);
+        CopiedLinkTests(check);
+        IdentificationPipelineTests.Run(check, directory);
         StructureTests(check); ProjectTests(check, directory); ResolverTests(check); PublicationTests(check);
     }
     private static void StructureTests(Action<string, bool> check)
@@ -167,6 +168,9 @@ internal static class SidebarIdentificationTests
             ambiguous.SameTitleAmbiguous && ambiguous.ThreadId is null && ambiguous.Error is not null);
         var unmatched = new SidebarSessionResolver().Resolve(View(30, title: "没有对应会话的页面"), new Dictionary<string, string> { ["a"] = Title }, plainProjects);
         check("unmatched page title does not offer the identify control", !unmatched.SameTitleAmbiguous);
+        var notIndexed = View(40) with { Sidebar = new("owner", new[] { new SidebarRowIdentity(40, Title, null) }, SameTitleRowCount: 2) };
+        check("visible sidebar duplicates offer identify before title index updates",
+            new SidebarSessionResolver().Resolve(notIndexed, new Dictionary<string, string>(), plainProjects).SameTitleAmbiguous);
     }
     private static void PublicationTests(Action<string, bool> check)
     {
@@ -196,24 +200,36 @@ internal static class SidebarIdentificationTests
         check("identification method is visible in follow status", FollowSelection.Status(route, null).Contains("侧栏绑定") && FollowSelection.Status(route, "manual") == "手动锁定");
     }
 
-    // Same-title conversations cannot be separated by title alone. Adopting the
-    // conversation Codex reports as followed is safe only when its own title matches
-    // the visible page; otherwise a stale report would bill the wrong conversation.
-    private static void SameTitleFollowTests(Action<string, bool> check)
+    private static void CopiedLinkTests(Action<string, bool> check)
     {
+        const string a = "11111111-1111-7111-8111-111111111111", b = "22222222-2222-7222-8222-222222222222";
         var projects = new LocalProjectIndex();
         var titles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["id-a"] = Title, ["id-b"] = Title, ["other"] = "另一个标题"
+            [a] = Title, [b] = Title
         };
-        check("same-title follow accepts the matching followed conversation",
-            SidebarSessionResolver.FollowedSameTitle(Title, "id-b", true, titles, projects) == "id-b");
-        check("same-title follow rejects a mismatched title",
-            SidebarSessionResolver.FollowedSameTitle(Title, "other", true, titles, projects) is null);
-        check("same-title follow rejects unknown and disconnected reports",
-            SidebarSessionResolver.FollowedSameTitle(Title, "missing", true, titles, projects) is null
-            && SidebarSessionResolver.FollowedSameTitle(Title, "id-a", false, titles, projects) is null);
-        check("same-title follow requires a visible page title",
-            SidebarSessionResolver.FollowedSameTitle(null, "id-a", true, titles, projects) is null);
+        var resolver = new SidebarSessionResolver(); var first = View(10); var second = View(20);
+        var linkA = "codex://threads/" + a; var linkB = "codex://threads/" + b;
+        check("copied link identifies the exact current same-title row",
+            resolver.ResolveCopiedLink(first, first, linkA, titles, projects).ThreadId == a
+            && resolver.Resolve(first, titles, projects).Method == "当前对话链接");
+        check("another same-title row does not inherit exact link identity", resolver.Resolve(second, titles, projects).ThreadId is null);
+        check("each same-title row retains its own copied identity",
+            resolver.ResolveCopiedLink(second, second, linkB, titles, projects).ThreadId == b
+            && resolver.Resolve(first, titles, projects).ThreadId == a && resolver.Resolve(second, titles, projects).ThreadId == b);
+        titles[a] = "标题索引暂未更新";
+        check("exact copied identity survives a stale title index", resolver.Resolve(first, titles, projects).ThreadId == a);
+        check("row change during copying cannot bind the previous page",
+            resolver.ResolveCopiedLink(first, second, linkA, titles, projects).ThreadId is null);
+        check("process restart invalidates a copied identity", resolver.Resolve(View(10, owner: "new-owner"), titles, projects).Method != "当前对话链接");
+        check("invalid copied content never establishes identity", resolver.ResolveCopiedLink(first, first, "ordinary clipboard text", titles, projects).ThreadId is null);
+        foreach (var invalid in new[] { "https://chatgpt.com/c/" + a, "codex://threads/" + a + "/extra", "codex://threads/" + a + "?host=remote", "codex://threads/not-a-guid", "codex://user@threads/" + a })
+            check("reject nonlocal or malformed copied link " + invalid, CurrentConversationLink.ThreadId(invalid) is null);
+        check("copied link canonicalizes uppercase UUID", CurrentConversationLink.ThreadId(linkA.ToUpperInvariant()) == a);
+        check("hidden sidebar cannot retain ambiguous copied identity",
+            resolver.ResolveCopiedLink(new(1, Title, DocumentKey: "owner"), new(1, Title, DocumentKey: "owner"), linkA, titles, projects).ThreadId is null);
+        var remote = new LocalProjectIndex();
+        remote.Load(JsonSerializer.SerializeToElement(new Dictionary<string, object> { ["thread-project-membership-host-ids"] = new Dictionary<string, string> { [a] = "remote-host" } }), Home);
+        check("remote thread link cannot be bound as a local conversation", resolver.ResolveCopiedLink(first, first, linkA, titles, remote).ThreadId is null);
     }
 }

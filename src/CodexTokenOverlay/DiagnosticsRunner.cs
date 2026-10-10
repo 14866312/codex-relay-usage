@@ -10,6 +10,13 @@ internal static class DiagnosticsRunner
     public static bool TryRun(IReadOnlyList<string> args, string root)
     {
         if (args.Count < 2) return false;
+        if (args[0] == "--clipboard-ui-probe")
+        {
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); Application.EnableVisualStyles();
+            var result = ClipboardUiTests.Run();
+            File.WriteAllText(args[1], JsonSerializer.Serialize(result, JsonOptions));
+            Environment.ExitCode = result.Failed == 0 ? 0 : 1; return true;
+        }
         if (args[0] == "--debug-route-probe" && args.Count > 2 && int.TryParse(args[2], out var processId))
         {
             using var reader = new CodexDebugRouteReader();

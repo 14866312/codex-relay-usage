@@ -184,7 +184,7 @@ internal sealed class TokenStripForm : Form
     private int PanelActionAt(Point p)
     {
         var identify = IdentifyButtonBounds;
-        if (!identify.IsEmpty && identify.Contains(p)) return 3;
+        if (!identify.IsEmpty && identify.Contains(p)) return _presentation.IsIdentifying ? 0 : 3;
         return !RevealedPanelBounds.Contains(p) ? 0 : PanelCloseBounds.Contains(p) ? 2 : DetailsButtonBounds.Contains(p) ? 1 : 0;
     }
 
@@ -586,6 +586,7 @@ internal sealed class TokenStripForm : Form
     {
         if (!IsEditMode)
         {
+            if (_presentation.IsIdentifying && IdentifyButtonBounds.Contains(clientPoint)) return;
             if (button == MouseButtons.Left && PanelActionAt(clientPoint) is var action && action != 0)
             {
                 _panelPressed = _panelHover = action; Capture = true; Invalidate(); return;
@@ -917,7 +918,7 @@ internal sealed class TokenStripForm : Form
             graphics.FillPath(brush, path);
         }
         if (pressed) bounds.Offset(0, metrics.StrokeWidth);
-        TextRenderer.DrawText(graphics, "自动识别", font, bounds, _palette.Accent, TextFlags | TextFormatFlags.HorizontalCenter);
+        TextRenderer.DrawText(graphics, _presentation.IsIdentifying ? "识别中…" : "自动识别", font, bounds, _palette.Accent, TextFlags | TextFormatFlags.HorizontalCenter);
     }
 
     private void DrawChevron(Graphics graphics, Rectangle bounds, OverlayRenderMetrics metrics)

@@ -8,7 +8,7 @@ internal sealed record OverlayPresentation(
     double ContextPercent, bool ShowContextProgress, string? StatusText,
     OverlayMetric? Total = null, string? ExtraText = null, string? ModelText = null,
     string? SourceText = null, string? FollowText = null, string? IssueText = null, string? EstimateText = null,
-    bool ShowIdentifyAction = false);
+    bool ShowIdentifyAction = false, bool IsIdentifying = false);
 
 internal static class OverlayPresentationBuilder
 {

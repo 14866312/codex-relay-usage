@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 namespace CodexTokenOverlay;
 
 internal sealed record SidebarRowIdentity(int NodeId, string Title, string? Project);
-internal sealed record SidebarViewIdentity(string Owner, IReadOnlyList<SidebarRowIdentity> Rows)
+internal sealed record SidebarViewIdentity(string Owner, IReadOnlyList<SidebarRowIdentity> Rows, int SameTitleRowCount = 0)
 {
     public string Key => Owner + "/" + string.Join(",", Rows.OrderBy(r => r.NodeId)
         .Select(r => $"{r.NodeId}:{r.Project?.Length ?? 0}:{r.Project}:{r.Title.Length}:{r.Title}"));
@@ -114,6 +114,7 @@ internal sealed class CodexSidebarAccessibility : IDisposable
     private string? _owner;
     private readonly List<AccessibleMetadata> _owned = [];
     private IReadOnlyList<SidebarRowNode> _rows = [];
+    private readonly Dictionary<int, string> _rowTitles = [];
     private long _lastDiscovery;
     private bool _foundSidebar;
     private bool _complete;
@@ -138,7 +139,8 @@ internal sealed class CodexSidebarAccessibility : IDisposable
                 throw new InvalidOperationException("侧栏正在切换");
         }
         if (document.get_accName(0) != title) throw new InvalidOperationException("页面正在切换");
-        return new(owner, rows);
+        var sameTitleRows = title is null ? 0 : _rowTitles.Values.Count(rowTitle => SidebarSessionResolver.RowTitleMatches(rowTitle, title));
+        return new(owner, rows, sameTitleRows);
     }
     private List<SidebarRowIdentity> CurrentRows()
     {
@@ -201,6 +203,11 @@ internal sealed class CodexSidebarAccessibility : IDisposable
             _foundSidebar = sidebars.Count == 1;
             _rows = _foundSidebar ? SidebarStructure.Rows(sidebars[0]) : [];
             if (_rows.Any(r => r.Row.Id is null) || _rows.Select(r => r.Row.Id).Distinct().Count() != _rows.Count) _complete = false;
+            // Read chrome titles once per discovery, not every poll. New conversations
+            // can be shown before session_index.jsonl receives their titles.
+            foreach (var row in _rows)
+                if (row.Row.Id is { } id && row.Row.Native!.Accessible.get_accName(0) is { Length: > 0 } rowTitle)
+                    _rowTitles[id] = rowTitle;
             _lastDiscovery = Stopwatch.GetTimestamp();
         }
         catch { Clear(); throw; }
@@ -208,7 +215,7 @@ internal sealed class CodexSidebarAccessibility : IDisposable
     private void Clear()
     {
         foreach (var node in _owned) node.Dispose();
-        _owned.Clear(); _rows = []; _foundSidebar = false; _complete = false; _lastDiscovery = 0;
+        _owned.Clear(); _rows = []; _rowTitles.Clear(); _foundSidebar = false; _complete = false; _lastDiscovery = 0;
     }
     public void Reset() { Clear(); _owner = null; }
     public void Dispose() => Reset();

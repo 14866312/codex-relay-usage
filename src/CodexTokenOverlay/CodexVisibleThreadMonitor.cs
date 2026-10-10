@@ -163,12 +163,18 @@ internal sealed class SessionTitleIndex
 internal sealed class CodexVisibleThreadMonitor : IDisposable
 {
     private sealed record BindingRequest(SidebarBindingTarget Target, string ThreadId, TaskCompletionSource<string?> Completion);
-    private sealed record IdentifyRequest(TaskCompletionSource<string?> Completion);
+    private sealed record IdentifyRequest(SidebarBindingTarget Target, TaskCompletionSource<string?> Completion,
+        CancellationTokenSource Cancellation)
+    {
+        public bool Started { get; set; }
+    }
     private readonly object _sync = new();
-    private readonly CodexIpcActiveThreadMonitor _ipc = new();
     private readonly CancellationTokenSource _cancellation = new();
     private readonly AutoResetEvent _wake = new(false);
     private readonly Thread _runner;
+    private readonly Func<CodexViewIdentity>? _readViewOverride;
+    private readonly Func<CodexViewIdentity, CancellationToken, CopiedConversationLink> _copyLink;
+    private readonly TimeSpan _identifyTimeout;
     private ActiveThreadRouteStatus _status = new(null, 0, false, 0, null);
     private string _root;
     private long _rootRevision;
@@ -179,9 +185,12 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
     private int _disposed;
     public event Action? StatusChanged;
 
-    public CodexVisibleThreadMonitor(string root)
+    public CodexVisibleThreadMonitor(string root, Func<CodexViewIdentity>? readView = null,
+        Func<CodexViewIdentity, CancellationToken, CopiedConversationLink>? copyLink = null, TimeSpan? identifyTimeout = null)
     {
         _root = root;
+        _readViewOverride = readView; _copyLink = copyLink ?? CurrentConversationLink.Read;
+        _identifyTimeout = identifyTimeout ?? TimeSpan.FromSeconds(6);
         _runner = new Thread(Run) { IsBackground = true, Name = "Codex visible conversation" };
         _runner.SetApartmentState(ApartmentState.STA);
         _runner.Start();
@@ -191,7 +200,8 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
         lock (_sync)
         {
             // A blocked renderer must not leave the previous conversation visible indefinitely.
-            if (_status.ActiveWindowCount > 0 && Stopwatch.GetElapsedTime(_lastReadTimestamp) > TimeSpan.FromSeconds(1) &&
+            var identifyingEmptyPage = _identifyRequest is { Started: true } && _status.ThreadId is null;
+            if (!identifyingEmptyPage && _status.ActiveWindowCount > 0 && Stopwatch.GetElapsedTime(_lastReadTimestamp) > TimeSpan.FromSeconds(1) &&
                 (_status.ThreadId is not null || _status.LastError != "当前页面读取超时"))
                 _status = _status with { ThreadId = null, LastError = "当前页面读取超时", Version = _status.Version + 1 };
             return _status;
@@ -207,6 +217,7 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
         lock (_sync)
         {
             if (string.Equals(_root, root, StringComparison.OrdinalIgnoreCase)) return;
+            CancelIdentify("日志目录已变化，请重新点击识别");
             _root = root; _rootRevision++; _view = null;
             _status = _status with { ThreadId = null, Version = _status.Version + 1 };
         }
@@ -243,31 +254,41 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
             }
         }
     }
-    // One press for same-title conversations: re-read the visible page, then adopt the
-    // conversation Codex itself is following when its title matches that page.
+    // Capture the current native row before asking Codex to copy its exact deep link.
+    // Background stream subscriptions deliberately play no part in identification.
     public async Task<string?> IdentifyVisibleAsync()
     {
         IdentifyRequest request;
         lock (_sync)
         {
             if (_disposed != 0) return "工具已退出";
-            _identifyRequest?.Completion.TrySetResult("识别操作已被更新的操作替换");
-            request = new(new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously));
+            var target = CaptureBindingTarget();
+            if (target is null) return "请展开 Codex 侧栏，回到目标对话后点击识别";
+            CancelIdentify("识别操作已被更新的操作替换");
+            request = new(target, new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously), new());
             _identifyRequest = request;
         }
         _wake.Set();
-        try { return await request.Completion.Task.WaitAsync(TimeSpan.FromSeconds(4)).ConfigureAwait(false); }
+        try { return await request.Completion.Task.WaitAsync(_identifyTimeout).ConfigureAwait(false); }
         catch (TimeoutException)
         {
             lock (_sync)
             {
                 if (request.Completion.Task.IsCompletedSuccessfully) return request.Completion.Task.Result;
-                if (ReferenceEquals(_identifyRequest, request)) _identifyRequest = null;
                 const string error = "当前页面核对超时，请稍后重新识别";
+                if (ReferenceEquals(_identifyRequest, request)) CancelIdentify(error);
                 request.Completion.TrySetResult(error);
                 return error;
             }
         }
+    }
+    // Caller owns _sync. An in-flight request disposes its own cancellation source.
+    private void CancelIdentify(string error)
+    {
+        if (_identifyRequest is not { } request) return;
+        _identifyRequest = null;
+        request.Cancellation.Cancel(); request.Completion.TrySetResult(error);
+        if (!request.Started) request.Cancellation.Dispose();
     }
     internal static ActiveThreadRouteStatus Advance(ActiveThreadRouteStatus previous, ActiveThreadRouteStatus next)
     {
@@ -287,11 +308,10 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
             while (!_cancellation.IsCancellationRequested)
             {
                 string root; long rootRevision; lock (_sync) { root = _root; rootRevision = _rootRevision; }
-                ActiveThreadRouteStatus next;
-                CodexViewIdentity? observedView = null;
+                IdentifyRequest? identify = null;
                 try
                 {
-                    var exact = debugRoute.Read(_cancellation.Token);
+                    var exact = _readViewOverride is null ? debugRoute.Read(_cancellation.Token) : null;
                     if (exact is not null)
                     {
                         var changed = false;
@@ -306,6 +326,12 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                                 changed = _status.Version != previous.Version;
                                 _bindingRequest?.Completion.TrySetResult("已启用页面唯一 ID 自动识别，无需绑定");
                                 _bindingRequest = null;
+                                if (_identifyRequest is { } queued)
+                                {
+                                    _identifyRequest = null;
+                                    queued.Completion.TrySetResult(exact.ThreadId is not null ? null : exact.LastError ?? "当前页面不是本地对话");
+                                    queued.Cancellation.Dispose();
+                                }
                             }
                         }
                         if (changed) StatusChanged?.Invoke();
@@ -315,69 +341,74 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                     index.SetRoot(root); index.Refresh(_cancellation.Token);
                     projects.SetRoot(root); projects.Refresh();
                     if (observedRoot != rootRevision) { resolver.Reset(); sidebar.Reset(); observedRoot = rootRevision; }
-                    var view = CodexViewIdentityReader.Read(sidebar);
-                    observedView = view;
-                    var ipc = _ipc.GetStatus();
-                    var key = SidebarSessionResolver.ViewKey(view);
+                    var view = _readViewOverride?.Invoke() ?? CodexViewIdentityReader.Read(sidebar);
+                    var before = view;
+                    CopiedConversationLink? copied = null;
                     lock (_sync)
                     {
-                        if (_bindingRequest is { } request)
+                        if (_identifyRequest is { } queued)
                         {
-                            _bindingRequest = null;
-                            string? bindError = "选择期间当前对话发生变化，请重新绑定";
-                            if (rootRevision == _rootRevision && request.Target.Matches(rootRevision, _status.Version, view, ipc.IsConnected))
-                                resolver.TryBind(view, request.ThreadId, index.Titles, projects, out bindError);
-                            request.Completion.TrySetResult(bindError);
+                            identify = queued; identify.Started = true;
+                            if (rootRevision != _rootRevision || !queued.Target.Matches(rootRevision, _status.Version, view,
+                                view.WindowCount == 1 && view.Error is null))
+                                copied = new(null, "识别期间切换了对话，请在目标对话重新点击识别");
                         }
                     }
-                    IdentifyRequest? identify;
-                    lock (_sync) { identify = _identifyRequest; _identifyRequest = null; }
-                    if (identify is not null)
+                    if (identify is not null && copied is null)
                     {
-                        var identifyError = "当前页面暂时无法核对，请稍后重试";
-                        if (view.Error is not null) identifyError = view.Error;
-                        else if (view.WindowCount != 1) identifyError = "仅支持一个 Codex 主窗口";
-                        else if (!ipc.IsConnected || ipc.ThreadId is null) identifyError = "Codex 页面跟随未连接，请切换一次对话后重试";
-                        else if (SidebarSessionResolver.FollowedSameTitle(view.Title, ipc.ThreadId, ipc.IsConnected, index.Titles, projects) is null)
-                            identifyError = "当前页面与跟随对话不一致，请切换一次对话后重试";
-                        else if (!resolver.TryBind(view, ipc.ThreadId, index.Titles, projects, out var bindError))
-                            identifyError = bindError ?? "当前侧栏无法稳定识别，请打开侧栏后重试";
-                        else identifyError = null;
-                        identify.Completion.TrySetResult(identifyError);
+                        using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token, identify.Cancellation.Token);
+                        copied = _copyLink(view, linked.Token);
+                        view = _readViewOverride?.Invoke() ?? CodexViewIdentityReader.Read(sidebar);
                     }
-                    var resolved = resolver.Resolve(view, index.Titles, projects);
-                    var id = ipc.IsConnected ? resolved.ThreadId : null;
-                    var method = resolved.Method;
-                    // Same-title conversations cannot be told apart by title alone. Codex IPC
-                    // reports the conversation the app is actually following; accept it only
-                    // when its own title matches the visible page, so a stale report cannot
-                    // silently substitute a different conversation.
-                    if (id is null && SidebarSessionResolver.FollowedSameTitle(view.Title, ipc.ThreadId, ipc.IsConnected, index.Titles, projects) is { } followed)
+                    var statusChanged = false;
+                    lock (_sync)
                     {
-                        id = followed; method = "页面跟随";
+                        if (rootRevision == _rootRevision)
+                        {
+                            var connected = view.WindowCount == 1 && view.Error is null;
+                            if (_bindingRequest is { } binding)
+                            {
+                                _bindingRequest = null;
+                                string? error = "选择期间当前对话发生变化，请重新绑定";
+                                if (binding.Target.Matches(rootRevision, _status.Version, view, connected))
+                                    resolver.TryBind(view, binding.ThreadId, index.Titles, projects, out error);
+                                binding.Completion.TrySetResult(error);
+                            }
+                            string? identifyError = null;
+                            var publishIdentify = identify is not null && ReferenceEquals(_identifyRequest, identify)
+                                && !identify.Completion.Task.IsCompleted && !identify.Cancellation.IsCancellationRequested;
+                            if (publishIdentify)
+                            {
+                                identifyError = !identify!.Target.Matches(rootRevision, _status.Version, view, connected)
+                                    ? "识别期间切换了对话，请在目标对话重新点击识别"
+                                    : copied?.Error ?? resolver.ResolveCopiedLink(before, view, copied?.Link, index.Titles, projects).Error;
+                            }
+                            var resolved = resolver.Resolve(view, index.Titles, projects);
+                            var errorText = view.Error ?? (resolved.ThreadId is null && view.WindowCount == 1 ? index.Error ?? resolved.Error : null);
+                            var next = new ActiveThreadRouteStatus(resolved.ThreadId, view.WindowCount, connected, 0, errorText,
+                                SidebarSessionResolver.ViewKey(view), resolved.Method, resolved.SameTitleAmbiguous);
+                            _view = view; _lastReadTimestamp = Stopwatch.GetTimestamp();
+                            var previous = _status; _status = Advance(previous, next);
+                            statusChanged = _status.Version != previous.Version;
+                            // Publish the exact identity before completing the click task.
+                            if (publishIdentify) { _identifyRequest = null; identify!.Completion.TrySetResult(identifyError); }
+                        }
+                        else if (ReferenceEquals(_identifyRequest, identify)) CancelIdentify("日志目录已变化，请重新点击识别");
                     }
-                    var error = view.Error ?? (id is null && view.WindowCount == 1 ? index.Error ?? resolved.Error : null);
-                    next = new(id, view.WindowCount, ipc.IsConnected, 0, error, key, method, resolved.SameTitleAmbiguous);
+                    if (statusChanged) StatusChanged?.Invoke();
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or COMException or InvalidOperationException)
                 {
-                    next = new(null, 0, _ipc.GetStatus().IsConnected, 0, "当前页面暂时无法读取");
-                }
-                var statusChanged = false;
-                lock (_sync)
-                {
-                    // A directory change that raced the accessibility read must not restore an old identity.
-                    if (rootRevision == _rootRevision)
+                    lock (_sync)
                     {
-                        _view = observedView;
-                        _lastReadTimestamp = Stopwatch.GetTimestamp();
-                        var previous = _status;
-                        _status = Advance(previous, next);
-                        statusChanged = _status.Version != previous.Version;
+                        _view = null; _lastReadTimestamp = Stopwatch.GetTimestamp();
+                        _status = Advance(_status, new(null, 0, false, 0, "当前页面暂时无法读取"));
+                        if (ReferenceEquals(_identifyRequest, identify)) CancelIdentify("当前页面暂时无法读取，请稍后识别");
                     }
+                    StatusChanged?.Invoke();
                 }
-                if (statusChanged) StatusChanged?.Invoke();
-                _wake.WaitOne(next.ActiveWindowCount == 0 ? 1000 : 150);
+                finally { identify?.Cancellation.Dispose(); }
+                _wake.WaitOne(GetStatus().ActiveWindowCount == 0 ? 1000 : 150);
             }
         }
         catch (OperationCanceledException) when (_cancellation.IsCancellationRequested) { }
@@ -386,9 +417,8 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _cancellation.Cancel(); _wake.Set();
-        lock (_sync) { _bindingRequest?.Completion.TrySetResult("工具已退出"); _bindingRequest = null; }
+        lock (_sync) { _bindingRequest?.Completion.TrySetResult("工具已退出"); _bindingRequest = null; CancelIdentify("工具已退出"); }
         // An inaccessible or hung renderer may take longer to answer; never block the UI indefinitely.
         if (_runner.Join(500)) { _wake.Dispose(); _cancellation.Dispose(); }
-        _ipc.Dispose();
     }
 }

@@ -100,21 +100,31 @@ internal sealed record SidebarBindingTarget(long RootRevision, long ViewVersion,
 
 internal sealed class SidebarSessionResolver
 {
-    private sealed record Binding(string ThreadId, string Title, string? ProjectKey, string Method);
+    private sealed record Binding(string ThreadId, string Title, string? ProjectKey, string Method, bool Exact = false);
     private readonly Dictionary<int, Binding> _bindings = [];
     private string? _owner;
     public void Reset() { _bindings.Clear(); _owner = null; }
     internal static string ViewKey(CodexViewIdentity view) => view.Sidebar is { Rows.Count: > 0 } sidebar
         ? sidebar.Key : $"{view.DocumentKey}/{view.ThreadId}/{view.Title}";
-    // Same-title conversations cannot be separated by title. Codex IPC reports the
-    // conversation the app is actually following, so adopt it only when its own title
-    // matches the visible page; a stale or unrelated report must never be substituted.
-    internal static string? FollowedSameTitle(string? pageTitle, string? followed, bool connected,
-        IReadOnlyDictionary<string, string> titles, LocalProjectIndex projects) =>
-        connected && !string.IsNullOrWhiteSpace(followed) && pageTitle is { Length: > 0 }
-        && titles.TryGetValue(followed!, out var followedTitle) && followedTitle == pageTitle
-        && !projects.IsRemote(followed!)
-            ? followed : null;
+    internal VisibleSessionResolution ResolveCopiedLink(CodexViewIdentity before, CodexViewIdentity after,
+        string? copiedLink, IReadOnlyDictionary<string, string> titles, LocalProjectIndex projects)
+    {
+        if (before.WindowCount != 1 || after.WindowCount != 1 || before.Error is not null || after.Error is not null
+            || before.DocumentKey is null || before.DocumentKey != after.DocumentKey || ViewKey(before) != ViewKey(after)
+            || before.Title != after.Title)
+            return new(null, "识别期间切换了对话，请在目标对话重新点击识别");
+        if (after.Sidebar is not { Rows.Count: > 0 } || string.IsNullOrWhiteSpace(after.Title)
+            || after.Sidebar.Rows.Any(row => !RowTitleMatches(row.Title, after.Title)))
+            return new(null, "请展开 Codex 侧栏后重新点击识别");
+        var id = CurrentConversationLink.ThreadId(copiedLink);
+        if (id is null) return new(null, "Codex 未提供有效的本地对话链接");
+        if (projects.IsRemote(id)) return new(null, "当前对话不属于本机日志，暂不能统计");
+        // An exact local link is authoritative even if the title index has not caught
+        // up with a rename. Store it against this document's current native row only.
+        ObserveOwner(after);
+        Remember(after, id, projects, "当前对话链接", exact: true);
+        return new(id, null, "当前对话链接");
+    }
     private void ObserveOwner(CodexViewIdentity view)
     {
         if (_owner == view.DocumentKey) return;
@@ -140,9 +150,21 @@ internal sealed class SidebarSessionResolver
         if (string.IsNullOrWhiteSpace(view.Title) || view.Title is "Codex" or "ChatGPT") return new(null, "当前页面未提供会话标识");
         var rows = view.Sidebar?.Rows ?? [];
         if (rows.Any(r => !RowTitleMatches(r.Title, view.Title))) return new(null, "侧栏与当前页面不一致，正在重新核对");
+        var exactIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            if (!_bindings.TryGetValue(row.NodeId, out var binding) || !binding.Exact) continue;
+            if (binding.Title != view.Title || projects.IsRemote(binding.ThreadId)
+                || binding.ProjectKey != projects.ProjectKey(binding.ThreadId))
+            { _bindings.Remove(row.NodeId); continue; }
+            exactIds.Add(binding.ThreadId);
+        }
+        if (exactIds.Count == 1) return new(exactIds.Single(), null, "当前对话链接");
+        if (exactIds.Count > 1) return new(null, "当前侧栏存在识别冲突，请重新点击识别", SameTitleAmbiguous: true);
         var scope = ProjectScope(view, projects, out var conflict);
         if (conflict) return new(null, "侧栏项目无法唯一匹配本地项目");
         var candidates = titles.Where(p => p.Value == view.Title).Select(p => p.Key).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var sameTitleInSidebar = view.Sidebar?.SameTitleRowCount > 1;
         var incomplete = false;
         if (scope is not null)
         {
@@ -167,12 +189,12 @@ internal sealed class SidebarSessionResolver
             var method = rows.Select(r => _bindings.GetValueOrDefault(r.NodeId)).First(b => b?.ThreadId == id)!.Method;
             return new(id, null, method);
         }
-        if (incomplete) return new(null, "同名会话的项目归属不完整，可绑定当前对话", SameTitleAmbiguous: true);
+        if (incomplete) return new(null, "当前会话的项目归属尚未更新", SameTitleAmbiguous: candidates.Length > 1 || sameTitleInSidebar);
         if (candidates.Length != 1 || projects.IsRemote(candidates[0]))
-            return new(null, rows.Count > 0 ? "同名对话无法唯一识别，可绑定当前对话" : "当前页面标题无法唯一匹配会话",
+            return new(null, candidates.Length > 1 || sameTitleInSidebar ? "同名对话，请点击识别" : "当前对话暂未提供会话标识",
                 // Only several conversations sharing the page title can be resolved by
                 // following the page; a title with no conversation at all cannot.
-                SameTitleAmbiguous: candidates.Length > 1);
+                SameTitleAmbiguous: candidates.Length > 1 || sameTitleInSidebar);
         var source = scope is not null ? "侧栏项目" : rows.Count > 0 ? "侧栏识别" : "唯一标题";
         Remember(view, candidates[0], projects, source);
         return new(candidates[0], null, source);
@@ -190,10 +212,10 @@ internal sealed class SidebarSessionResolver
         if (conflict || projects.IsRemote(id) || (scope is not null && projects.ProjectKey(id) != scope)) return false;
         Remember(view, id, projects, "侧栏绑定"); error = null; return true;
     }
-    private void Remember(CodexViewIdentity view, string id, LocalProjectIndex projects, string method)
+    private void Remember(CodexViewIdentity view, string id, LocalProjectIndex projects, string method, bool exact = false)
     {
         if (view.DocumentKey is null || view.Sidebar is not { Rows.Count: > 0 } sidebar) return;
         if (_bindings.Count + sidebar.Rows.Count > 512) _bindings.Clear();
-        foreach (var row in sidebar.Rows) _bindings[row.NodeId] = new(id, view.Title!, projects.ProjectKey(id), method);
+        foreach (var row in sidebar.Rows) _bindings[row.NodeId] = new(id, view.Title!, projects.ProjectKey(id), method, exact);
     }
 }

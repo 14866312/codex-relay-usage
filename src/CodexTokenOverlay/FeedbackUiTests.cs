@@ -48,7 +48,9 @@ internal static class FeedbackUiTests
                 Check(theme + " mouse down is visible before opening", form.IsPointerPressed && form.Capture && PixelsDiffer(hover, pressed) && clicks == 0);
                 SaveStates(previewDirectory, theme, normal, hover, pressed);
                 // The one-tap identification appears only while the visible page is unresolved.
-                var identify = form.CurrentPresentation with { ShowIdentifyAction = true };
+                var standardPresentation = form.CurrentPresentation;
+                var identify = OverlayPresentationBuilder.CreateWaiting("同名对话，请点击右侧识别", DisplayField.Total, DisplayField.CacheHitRate,
+                    OverlaySettings.CreateDefault().VisibleFields) with { ShowIdentifyAction = true };
                 form.SetPresentation(identify); form.ApplyLayout(collapsed); Application.DoEvents();
                 var identifyBounds = form.IdentifyButtonBounds;
                 Check(theme + " identify action is offered while the page is unresolved", !identifyBounds.IsEmpty
@@ -67,7 +69,12 @@ internal static class FeedbackUiTests
                     && form.CurrentLayout!.State == OverlayVisualState.Collapsed);
                 Send(handle, 0x0201, identifyPoint, 1); Send(handle, 0x0202, outside);
                 Check(theme + " identify release outside cancels", identifyClicks == 1);
-                form.SetPresentation(form.CurrentPresentation with { ShowIdentifyAction = false });
+                form.SetPresentation(form.CurrentPresentation with { IsIdentifying = true });
+                if (previewDirectory is not null) Save(form, Path.Combine(previewDirectory, theme.ToString().ToLowerInvariant() + "-toolbar-identifying.png"));
+                Send(handle, 0x0201, identifyPoint, 1); Send(handle, 0x0202, identifyPoint);
+                Check(theme + " identify busy state rejects duplicate clicks and expansion", identifyClicks == 1 && opens == 0);
+                form.SetPresentation(form.CurrentPresentation with { IsIdentifying = false });
+                form.SetPresentation(standardPresentation);
                 Check(theme + " identify action hides when the page resolves", form.IdentifyButtonBounds.IsEmpty);
                 form.ApplyLayout(collapsed); Application.DoEvents();
                 Send(handle, 0x0200, outside, 1);

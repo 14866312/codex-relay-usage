@@ -16,6 +16,49 @@ internal static class ProbeRunner
 
     public static bool TryRun(IReadOnlyList<string> args, string sessionRoot)
     {
+        if (args.Count >= 2 && args[0] == "--identify-button-probe")
+        {
+            PrepareWindowProbeDpiAwareness();
+            var settings = Path.Combine(Path.GetTempPath(), "CodexUsage-button-probe-" + Guid.NewGuid().ToString("N"), "settings.json");
+            using var clipboardBefore = ClipboardSnapshot.Capture();
+            using var context = new OverlayContext(sessionRoot, settings, useSavedRoot: false, showTrayIcon: false);
+            using var timer = new System.Windows.Forms.Timer { Interval = 40 };
+            var deadline = DateTime.UtcNow.AddSeconds(8); var clicked = false;
+            ConversationProbeSample? before = null;
+            timer.Tick += (_, _) =>
+            {
+                var sample = context.ReadConversationProbeSample();
+                if (!clicked && sample.Route.SameTitleAmbiguous) { before = sample; clicked = context.ClickIdentifyButtonForProbe(); }
+                var success = clicked && !context.IdentifyProbeInFlight && sample.Route.ThreadId is not null
+                    && sample.PublishedThreadId == sample.Route.ThreadId;
+                if (!success && DateTime.UtcNow < deadline) return;
+                timer.Stop();
+                using var clipboardAfter = ClipboardSnapshot.Capture();
+                var preserved = clipboardBefore.Fingerprint() == clipboardAfter.Fingerprint();
+                WriteJson(args[1], new { Clicked = clicked, Success = success, ClipboardPreserved = preserved, Before = before, After = sample });
+                Environment.ExitCode = success && preserved ? 0 : 1;
+                context.ExitThread();
+            };
+            timer.Start(); Application.Run(context); return true;
+        }
+        // Explicit local end-to-end check of the same click path used by the overlay.
+        // Contains local identifiers; never include its output in releases.
+        if (args.Count >= 2 && args[0] == "--identify-probe")
+        {
+            PrepareWindowProbeDpiAwareness();
+            using var monitor = new CodexVisibleThreadMonitor(sessionRoot);
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (monitor.CaptureBindingTarget() is null && DateTime.UtcNow < deadline) Thread.Sleep(50);
+            using var clipboardBefore = ClipboardSnapshot.Capture();
+            var before = monitor.GetStatus();
+            var error = monitor.IdentifyVisibleAsync().GetAwaiter().GetResult();
+            var after = monitor.GetStatus();
+            using var clipboardAfter = ClipboardSnapshot.Capture();
+            var clipboardPreserved = clipboardBefore.Fingerprint() == clipboardAfter.Fingerprint();
+            WriteJson(args[1], new { Before = before, Error = error, After = after, ClipboardPreserved = clipboardPreserved });
+            Environment.ExitCode = error is null && after.ThreadId is not null && clipboardPreserved ? 0 : 1;
+            return true;
+        }
         // Validate the production fresh-view binding on the local desktop only.
         // This output includes local identifiers and must never be packaged.
         if (args.Count >= 3 && args[0].Equals("--sidebar-binding-probe", StringComparison.OrdinalIgnoreCase))

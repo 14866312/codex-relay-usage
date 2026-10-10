@@ -54,7 +54,7 @@ internal sealed class OverlayContext : ApplicationContext
     private long _nextHostValidation;
     private long _nextBackgroundPoll;
     private (TokenSnapshot? Snapshot, SessionCostResult? Cost, ActiveThreadRouteStatus Route, string? ManualId,
-        string? Error, DisplayField Primary, DisplayField Secondary, DisplayField Visible)? _presentedState;
+        string? Error, DisplayField Primary, DisplayField Secondary, DisplayField Visible, bool Identifying)? _presentedState;
     private string? _pendingThreadId => _selection.ThreadId;
     private ActiveThreadRouteStatus _pendingRouteStatus = new(null, 0, false, 0, null);
     private string? _manualThreadId;
@@ -619,6 +619,22 @@ internal sealed class OverlayContext : ApplicationContext
         _lastSnapshot?.EffectiveTotalTokens, _lastSnapshot?.TurnCount, _selection.Error);
 
     internal void HideConversationProbe() { _manuallyHidden = true; Tick(); }
+    // Explicit local end-to-end probe: send mouse messages to this process's actual
+    // displayed button, never to Codex's conversation or the user's real cursor.
+    internal bool ClickIdentifyButtonForProbe()
+    {
+        var bounds = _form.IdentifyButtonBounds;
+        if (!_form.Visible || _identifyInFlight || bounds.IsEmpty) return false;
+        var point = new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
+        var packed = new IntPtr((point.Y << 16) | (point.X & 0xffff));
+        SendProbeMouse(_form.Handle, 0x0200, IntPtr.Zero, packed);
+        SendProbeMouse(_form.Handle, 0x0201, new IntPtr(1), packed);
+        SendProbeMouse(_form.Handle, 0x0202, IntPtr.Zero, packed);
+        return true;
+    }
+    internal bool IdentifyProbeInFlight => _identifyInFlight;
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendProbeMouse(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
 
     // Uses the production read/publication path with synthetic logs and no visible overlay.
     // Disabling the ordinary timer proves that notifications alone publish new usage.
@@ -653,7 +669,7 @@ internal sealed class OverlayContext : ApplicationContext
     private void RefreshPresentation()
     {
         var state = (_lastSnapshot, _cost, _pendingRouteStatus, _manualThreadId, _pendingError,
-            _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField, _settings.VisibleFields);
+            _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField, _settings.VisibleFields, _identifyInFlight);
         if (_presentedState == state) return;
         _presentedState = state;
         var following = FollowSelection.Status(_pendingRouteStatus, _manualThreadId);
@@ -669,8 +685,11 @@ internal sealed class OverlayContext : ApplicationContext
             // Only same-title ambiguity gets the one-tap identification. A page that
             // simply cannot be read yet must not offer a control that cannot resolve it.
             ShowIdentifyAction = _manualThreadId is null && _pendingThreadId is null
-                && _pendingRouteStatus.SameTitleAmbiguous
+                && _pendingRouteStatus.SameTitleAmbiguous,
+            IsIdentifying = _identifyInFlight
         };
+        if (_presentation.ShowIdentifyAction)
+            _presentation = _presentation with { StatusText = _identifyInFlight ? "正在识别当前对话…" : "同名对话，请点击右侧识别" };
         _form.SetPresentation(_presentation);
         _costDetails?.SetResult(_pendingThreadId, _cost);
     }
@@ -780,12 +799,12 @@ internal sealed class OverlayContext : ApplicationContext
         }
     }
 
-    // One press for same-title conversations: adopt the page Codex is actually following
-    // instead of asking the user to pick a row from an ambiguous list.
+    // One press copies the visible conversation's exact link, then restores the clipboard.
     private async Task IdentifyVisibleSessionAsync()
     {
         if (_identifyInFlight) return;
         _identifyInFlight = true;
+        RefreshPresentation();
         try
         {
             var error = await _routeMonitor.IdentifyVisibleAsync();
@@ -794,9 +813,12 @@ internal sealed class OverlayContext : ApplicationContext
                 _trayIcon.ShowBalloonTip(5000, "未能自动识别当前对话", error, ToolTipIcon.Info);
             else
             {
+                var hadPinnedSetting = _settings.PinnedThreadId is not null;
                 _manualThreadId = null; _settings.PinnedThreadId = null;
-                _pinSessionMenuItem.Checked = false; _settings.Save(_settingsPath); _selectionRevision++;
-                _trayIcon.ShowBalloonTip(4000, "已识别当前对话", "已按 Codex 正在跟随的对话统计，切换对话后继续自动跟随。", ToolTipIcon.Info);
+                _pinSessionMenuItem.Checked = false;
+                if (hadPinnedSetting) _settings.Save(_settingsPath);
+                _selectionRevision++;
+                _trayIcon.ShowBalloonTip(3000, "已识别当前对话", "已读取当前对话链接，切换后继续自动跟随。", ToolTipIcon.Info);
             }
         }
         finally
