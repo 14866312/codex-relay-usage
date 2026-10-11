@@ -51,6 +51,12 @@
 </details>
 
 <details>
+<summary>为什么刚启动 Codex 后所有页面短暂显示“当前页面尚未就绪”？</summary>
+
+Codex 的无障碍树按需构建：构建完成前页面只暴露一个尚未填充的文档节点。1.3.7 起工具把这段等待单独标注为“当前页面尚未就绪”并持续自动重试，就绪后自动恢复识别与跟随，无需任何操作；旧版在这段时间会把每个页面都误报为“无法唯一识别当前页面”。
+</details>
+
+<details>
 <summary>费用为什么显示“未计价”或与账单不一致？</summary>
 
 金额始终是按当前配置的**估算**。日志缺失或被上游改写的用量无法还原；未配置价格的模型归入“未计价”页签。金额统一显示三位小数，小额正数显示 `<$0.001`，内部计算保留完整精度。
@@ -81,6 +87,8 @@ dotnet publish .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release -r wi
 ## 文档
 
 [中文使用说明](README.zh-CN.md) · [版本变更](CHANGELOG.md) · [验证记录](ACCEPTANCE.zh-CN.md) · [上游与许可](UPSTREAM.md)
+
+[知识库索引](docs/README.md) · [术语表](CONTEXT.md)
 
 ## 许可
 

@@ -33,6 +33,7 @@ internal static class CodexViewIdentityReader
             var queue = new Queue<(IAccessible Node, int Depth)>();
             var visited = new HashSet<object>();
             var documents = new List<(IAccessible Node, string? Url)>();
+            var unpopulatedDocuments = 0;
             queue.Enqueue((accessible, 0));
             // Stop at documents: never walk the conversation's text, tool output, or browser contents.
             while (queue.Count > 0 && visited.Count < 256)
@@ -44,6 +45,7 @@ internal static class CodexViewIdentityReader
                 {
                     var url = node.get_accValue(0);
                     if (IsCodexDocument(url)) documents.Add((node, url));
+                    else if (string.IsNullOrWhiteSpace(url)) unpopulatedDocuments++;
                     continue;
                 }
                 var count = Math.Min(64, node.accChildCount);
@@ -53,7 +55,11 @@ internal static class CodexViewIdentityReader
                 foreach (var child in children.Take(actual))
                     if (child is IAccessible nested) queue.Enqueue((nested, depth + 1));
             }
-            if (documents.Count != 1) { sidebar?.Reset(); return new(1, null, Error: "无法唯一识别当前页面"); }
+            if (documents.Count != 1)
+            {
+                sidebar?.Reset();
+                return new(1, null, Error: DocumentReadError(documents.Count, unpopulatedDocuments));
+            }
             var document = documents[0];
             var title = document.Node.get_accName(0);
             using var metadata = new AccessibleMetadata(document.Node);
@@ -73,6 +79,13 @@ internal static class CodexViewIdentityReader
 
     private static bool IsCodexDocument(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
         (uri.Scheme == "app" || uri.Scheme == "file");
+
+    // Codex exposes its Chromium document before the lazily built accessibility tree
+    // fills in the URL, name and children. That pending page is not an ambiguous one:
+    // there is no duplicate-title problem, and a later read resolves it without user
+    // action. Keep the ambiguity error for walks that actually saw candidate documents.
+    internal static string DocumentReadError(int identifiedDocuments, int unpopulatedDocuments) =>
+        identifiedDocuments == 0 && unpopulatedDocuments > 0 ? "当前页面尚未就绪" : "无法唯一识别当前页面";
 
     internal static string? ThreadIdFromUrl(string? value)
     {
@@ -265,8 +278,10 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
             if (_disposed != 0) return "工具已退出";
             // UI metadata can lag a recent navigation. Capture only the document and
             // root here; the worker anchors the operation to a fresh current row.
-            if (_view is not { DocumentKey: not null } queuedView || _status.ActiveWindowCount != 1)
-                return "请展开 Codex 侧栏，回到目标对话后点击识别";
+            if (_status.ActiveWindowCount != 1) return "请展开 Codex 侧栏，回到目标对话后点击识别";
+            // A pending or unreadable page must not be answered with sidebar advice.
+            if (_view?.Error is { } viewError) return viewError + "，请稍后重新点击识别";
+            if (_view is not { DocumentKey: not null } queuedView) return "请展开 Codex 侧栏，回到目标对话后点击识别";
             CancelIdentify("识别操作已被更新的操作替换");
             request = new(_rootRevision, queuedView.DocumentKey, new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously), new());
             _identifyRequest = request;
