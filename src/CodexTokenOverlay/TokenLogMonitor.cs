@@ -85,7 +85,11 @@ internal sealed class TokenLogMonitor : IDisposable
                 watcher.Error += (_, _) => NotifyCatalogChange();
                 watcher.EnableRaisingEvents = true; _watchers.Add(watcher);
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // Keep polling even when a root cannot be watched; diagnostics can show it was ignored.
+                DiagnosticsSink.Record("watcher:" + root, e);
+            }
         }
     }
     private void NotifyCatalogChange()
@@ -205,7 +209,8 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
     private DateTime _writeUtc, _creationUtc, _updatedUtc;
     private DateTime _turnStartUtc, _lastRecordUtc;
     private string? _lastRecordTurn;
-    private double _speedOutput, _speedSeconds;
+    private double _speedOutput, _speedSeconds, _completionGenerationSeconds;
+    private string? _speedTurn, _completionTurn;
     private long? _total, _input, _cache, _output, _reasoning, _contextUsed, _contextWindow;
     private string? _model, _parseIssue;
     private SessionUsageLedger _ledger = new(threadId);
@@ -273,6 +278,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
         _total = _input = _cache = _output = _reasoning = _contextUsed = _contextWindow = null;
         _model = _parseIssue = null; _updatedUtc = default; Snapshot = null;
         _turnStartUtc = _lastRecordUtc = default; _lastRecordTurn = null; _speedOutput = 0; _speedSeconds = 0;
+        _completionGenerationSeconds = 0; _completionTurn = null; _speedTurn = null;
         _ledger = new(threadId);
         _liveUsage = new(); _runningTurns.Clear();
     }
@@ -311,12 +317,22 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
                 if (turn is not null) { _turns.Add(turn); _runningTurns.Add(turn); }
                 _turnStartUtc = Timestamp(root) ?? default;
                 _lastRecordUtc = default; _lastRecordTurn = turn;
+                _completionGenerationSeconds = 0; _completionTurn = null;
                 return;
             }
-            if (eventType is "task_complete" or "task_completed" or "turn_aborted")
+            if (eventType is "task_complete" or "task_completed")
             {
-                if (String(payload, "turn_id") is { } turn) _runningTurns.Remove(turn);
+                var turn = String(payload, "turn_id");
+                if (turn is not null) _runningTurns.Remove(turn);
                 else _runningTurns.Clear();
+                ObserveCompletion(payload, turn);
+                return;
+            }
+            if (eventType == "turn_aborted")
+            {
+                if (String(payload, "turn_id") is { } aborted) _runningTurns.Remove(aborted);
+                else _runningTurns.Clear();
+                _completionGenerationSeconds = 0; _completionTurn = null;
                 return;
             }
             if (eventType != "token_count" || !payload.TryGetProperty("info", out var usage) || usage.ValueKind != JsonValueKind.Object) return;
@@ -348,25 +364,48 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
     private static DateTime? Timestamp(JsonElement root) =>
         DateTime.TryParse(String(root, "timestamp"), null, System.Globalization.DateTimeStyles.RoundtripKind, out var stamp)
             ? stamp.ToUniversalTime() : null;
-    // Average reported output per wall-clock second of the current turn. Only a reported
-    // usage record advances this value; the log has no per-token stream to count.
+    // Average reported output per generation second of the current turn. A completed turn
+    // reports its own duration and first-token wait, which is the window the relay bills and
+    // reports as tokens per second; only a reported usage record advances this value.
     private void ObserveSpeed(JsonElement root, JsonElement payload, UsageAmounts usageRecord)
     {
         var turn = String(payload, "turn_id");
         var stamp = Timestamp(root);
         if (stamp is null) return;
+        // A speed belongs to one turn; a record from another turn never keeps the old numerator.
+        if (turn is not null && !string.Equals(turn, _speedTurn, StringComparison.Ordinal))
+        { _speedOutput = 0; _speedSeconds = 0; }
         if (_turnStartUtc == default || (turn is not null && _lastRecordTurn is not null && turn != _lastRecordTurn))
         {
             _turnStartUtc = stamp.Value; _lastRecordUtc = default; _speedOutput = 0; _speedSeconds = 0;
+            if (_completionTurn is not null && !string.Equals(_completionTurn, turn, StringComparison.Ordinal))
+            { _completionGenerationSeconds = 0; _completionTurn = null; }
         }
         _lastRecordTurn = turn ?? _lastRecordTurn;
         var turnOutput = usageRecord.Output;
         if (payload.TryGetProperty("turn_token_usage", out var reported) && reported.ValueKind == JsonValueKind.Object)
             turnOutput = Number(reported, "output_tokens", []) ?? turnOutput;
         if (turnOutput is not { } output || output < 0) return;
-        var elapsed = (stamp.Value - _turnStartUtc).TotalSeconds;
-        if (elapsed < 1) return;
-        _lastRecordUtc = stamp.Value; _speedOutput = output; _speedSeconds = elapsed;
+        // A reported completion window outranks wall-clock elapsed; it excludes the first-token wait.
+        var window = _completionGenerationSeconds >= 1 &&
+            (_completionTurn is null || turn is null || string.Equals(_completionTurn, turn, StringComparison.Ordinal))
+            ? _completionGenerationSeconds : (stamp.Value - _turnStartUtc).TotalSeconds;
+        if (window < 1) return;
+        _lastRecordUtc = stamp.Value; _speedOutput = output; _speedSeconds = window; _speedTurn = turn ?? _speedTurn;
+    }
+    // duration_ms minus time_to_first_token_ms is the relay's generation window. Very short
+    // generations keep the full duration so a near-zero window never inflates the rate.
+    private void ObserveCompletion(JsonElement payload, string? turn)
+    {
+        _completionGenerationSeconds = 0; _completionTurn = null;
+        if (Number(payload, "duration_ms", []) is not { } durationMs || durationMs <= 0) return;
+        var window = (durationMs - (Number(payload, "time_to_first_token_ms", []) ?? 0)) / 1000d;
+        if (window < 1) window = durationMs / 1000d;
+        if (window <= 0) return;
+        _completionGenerationSeconds = window; _completionTurn = turn;
+        // Usage records usually precede the completion event, so refresh the current turn now.
+        if (turn is not null && _speedOutput > 0 && string.Equals(_speedTurn, turn, StringComparison.Ordinal))
+            _speedSeconds = window;
     }
     private double? OutputSpeed => _speedSeconds >= 1 && _speedOutput > 0 ? _speedOutput / _speedSeconds : null;
     internal static string? String(JsonElement element, string name) => element.ValueKind == JsonValueKind.Object &&
