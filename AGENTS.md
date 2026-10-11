@@ -24,6 +24,8 @@ Follow the surrounding C# style: four spaces, nullable reference types, file-sco
 
 There is no separate test project or `dotnet test` suite. Add regression checks to the relevant in-project test class and wire new probes into `DiagnosticsRunner` or `Verify.ps1` when needed. Use synthetic logs and fixtures; do not depend on personal Codex sessions for routine tests. Ensure the build and verification commands above pass before submitting.
 
+The `*Tests.cs` classes and the synthetic self-test are intentionally compiled into the shipped executable. `Verify.ps1` must exercise the exact bits users receive, including WinForms behavior that cannot be tested in a stripped build, so do not move them behind an `#if DEBUG` guard or a separate test assembly without preserving a publish-time verification path.
+
 ## Commits and Pull Requests
 
 History includes release titles and scoped prefixes such as `fix:`, `feat:`, and `ui:`. Use a concise imperative subject; use a prefix for focused changes (for example, `fix: preserve session selection`). PRs should explain user-visible behavior and rationale, list build/test results, link related issues when applicable, and include screenshots for UI changes. Call out Windows-only manual checks that remain.
