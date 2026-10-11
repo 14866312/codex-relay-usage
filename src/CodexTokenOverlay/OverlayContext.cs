@@ -92,7 +92,6 @@ internal sealed class OverlayContext : ApplicationContext
 
         var menu = new ContextMenuStrip { Font = _menuFont };
         _sessionMenuItem = new ToolStripMenuItem("会话：等待数据") { Enabled = false };
-        menu.Items.Add(_sessionMenuItem);
         _pinSessionMenuItem = new ToolStripMenuItem("锁定当前会话") { CheckOnClick = true, Checked = _manualThreadId is not null };
         _pinSessionMenuItem.CheckedChanged += (_, _) =>
         {
@@ -103,45 +102,31 @@ internal sealed class OverlayContext : ApplicationContext
             _pinSessionMenuItem.Text = _manualThreadId is not null ? "已锁定当前会话" : "锁定当前会话";
             Tick();
         };
-        menu.Items.Add(_pinSessionMenuItem);
         var selectItem = new ToolStripMenuItem("手动选择并锁定会话…");
         selectItem.Click += async (_, _) => await SelectSessionAsync();
-        menu.Items.Add(selectItem);
         var bindItem = new ToolStripMenuItem("绑定当前对话并自动跟随…");
         bindItem.Click += async (_, _) => await BindVisibleSessionAsync();
-        menu.Items.Add(bindItem);
         var directoryItem = new ToolStripMenuItem("选择 Codex 日志目录…");
         directoryItem.Click += (_, _) => SelectLogDirectory();
-        menu.Items.Add(directoryItem);
-        menu.Items.Add(new ToolStripSeparator());
         var pricesItem = new ToolStripMenuItem("模型价格…");
         pricesItem.Click += (_, _) => EditPrices();
-        menu.Items.Add(pricesItem);
         var costsItem = new ToolStripMenuItem("费用明细…");
         costsItem.Click += (_, _) => ShowCostDetails();
-        menu.Items.Add(costsItem);
-        menu.Items.Add(new ToolStripSeparator());
 
         _adjustManualMenuItem = new ToolStripMenuItem("调整位置和大小…");
         _adjustManualMenuItem.Click += (_, _) => BeginManualEditing();
-        menu.Items.Add(_adjustManualMenuItem);
         _saveManualMenuItem = new ToolStripMenuItem("完成调整") { Visible = false };
         _saveManualMenuItem.Click += (_, _) => SaveManualEditing();
-        menu.Items.Add(_saveManualMenuItem);
         _cancelManualMenuItem = new ToolStripMenuItem("取消调整") { Visible = false };
         _cancelManualMenuItem.Click += (_, _) => CancelManualEditing();
-        menu.Items.Add(_cancelManualMenuItem);
         _resetManualMenuItem = new ToolStripMenuItem("重置到顶部菜单空白区");
         _resetManualMenuItem.Click += (_, _) => ResetManualPlacement();
-        menu.Items.Add(_resetManualMenuItem);
 
         _traditionalMenuItem = new ToolStripMenuItem("传统定位");
         AddAnchorMenu(_traditionalMenuItem, "顶部菜单空白区（默认）", AnchorMode.TitleBarTopRight);
         AddAnchorMenu(_traditionalMenuItem, "自动吸附", AnchorMode.Auto);
         AddAnchorMenu(_traditionalMenuItem, "窗口内右上", AnchorMode.InsideTopRight);
         AddAnchorMenu(_traditionalMenuItem, "窗口内右下", AnchorMode.InsideBottomRight);
-        menu.Items.Add(_traditionalMenuItem);
-        menu.Items.Add(new ToolStripSeparator());
 
         var collapsedFieldsMenu = new ToolStripMenuItem("收起时显示");
         var primaryMenu = new ToolStripMenuItem("左侧指标");
@@ -154,14 +139,12 @@ internal sealed class OverlayContext : ApplicationContext
         }
         collapsedFieldsMenu.DropDownItems.Add(primaryMenu);
         collapsedFieldsMenu.DropDownItems.Add(secondaryMenu);
-        menu.Items.Add(collapsedFieldsMenu);
 
         var fieldsMenu = new ToolStripMenuItem("显示字段");
         foreach (var field in DisplayFieldRules.Ordered)
         {
             AddVisibleFieldMenu(fieldsMenu, OverlayPresentationBuilder.GetFieldMenuText(field), field);
         }
-        menu.Items.Add(fieldsMenu);
         var themeMenu = new ToolStripMenuItem("主题");
         foreach (var option in new[] { (Mode: "system", Text: "跟随 Windows"), (Mode: "light", Text: "浅色"), (Mode: "dark", Text: "深色") })
         {
@@ -174,8 +157,6 @@ internal sealed class OverlayContext : ApplicationContext
             };
             themeMenu.DropDownItems.Add(item);
         }
-        menu.Items.Add(themeMenu);
-        menu.Items.Add(new ToolStripSeparator());
 
         _visibilityMenuItem = new ToolStripMenuItem("暂时隐藏");
         _visibilityMenuItem.Click += (_, _) =>
@@ -195,26 +176,16 @@ internal sealed class OverlayContext : ApplicationContext
                 Tick();
             }
         };
-        menu.Items.Add(_visibilityMenuItem);
 
         var startupItem = new ToolStripMenuItem("开机启动");
         startupItem.Click += (_, _) => StartStartupSettings(startupItem.Checked ? "--remove-startup" : "--install-startup");
-        menu.Items.Add(startupItem);
-        var removeStartupItem = new ToolStripMenuItem("取消开机自动启动");
-        removeStartupItem.Click += (_, _) => StartStartupSettings("--remove-startup");
-        menu.Items.Add(removeStartupItem);
 
         var exitItem = new ToolStripMenuItem("退出");
         exitItem.Click += (_, _) => ExitOverlay();
-        menu.Items.Add(exitItem);
 
-        // Keep all existing commands while grouping them into the compact design.
         var positionMenu = new ToolStripMenuItem("位置与大小") { Tag = UiGlyph.Position };
         var appearanceMenu = new ToolStripMenuItem("外观") { Tag = UiGlyph.Palette };
         var dataMenu = new ToolStripMenuItem("会话与数据") { Tag = UiGlyph.Data };
-        var unusedSeparators = menu.Items.OfType<ToolStripSeparator>().ToArray();
-        menu.Items.Clear();
-        foreach (var separator in unusedSeparators) separator.Dispose();
         positionMenu.DropDownItems.AddRange([_adjustManualMenuItem, _saveManualMenuItem, _cancelManualMenuItem, _resetManualMenuItem, _traditionalMenuItem]);
         appearanceMenu.DropDownItems.AddRange([positionMenu, collapsedFieldsMenu, fieldsMenu, themeMenu]);
         dataMenu.DropDownItems.AddRange([_pinSessionMenuItem, selectItem, bindItem, new ToolStripSeparator(), directoryItem]);
@@ -222,7 +193,6 @@ internal sealed class OverlayContext : ApplicationContext
         _sessionMenuItem.Tag = UiGlyph.Link; _visibilityMenuItem.Tag = UiGlyph.Hide; startupItem.Tag = UiGlyph.Startup; exitItem.Tag = UiGlyph.Exit;
         _adjustManualMenuItem.Tag = UiGlyph.Position; _resetManualMenuItem.Tag = UiGlyph.Position; directoryItem.Tag = UiGlyph.Folder; bindItem.Tag = UiGlyph.Link;
         menu.Items.AddRange([_sessionMenuItem, new ToolStripSeparator(), pricesItem, costsItem, new ToolStripSeparator(), appearanceMenu, dataMenu, _visibilityMenuItem, new ToolStripSeparator(), startupItem, new ToolStripSeparator(), exitItem]);
-        removeStartupItem.Dispose();
         menu.Opening += (_, _) => startupItem.Checked = File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Codex 用量自动启动.lnk"));
         _trayMenu = menu;
         ModernMenuRenderer.Apply(menu, _form.CurrentThemePalette);
