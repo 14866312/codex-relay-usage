@@ -46,6 +46,7 @@ internal sealed class OverlayContext : ApplicationContext
     private bool _manuallyHidden;
     private bool _bindingPickerOpen;
     private bool _identifyInFlight;
+    private string? _inlineIssue;
     private int _pollInFlight;
     private int _disposed;
     private int _logRefreshQueued;
@@ -234,8 +235,7 @@ internal sealed class OverlayContext : ApplicationContext
             Visible = showTrayIcon,
             ContextMenuStrip = menu
         };
-        if (pricingLoad.Error is not null)
-            _trayIcon.ShowBalloonTip(6000, "价格配置读取失败", pricingLoad.Error, ToolTipIcon.Warning);
+        if (pricingLoad.Error is not null) _inlineIssue = "价格配置无法读取，请打开模型价格检查";
 
         _form.SetPresentation(_presentation);
         _form.CapsuleClicked += HandleCapsuleClicked;
@@ -598,7 +598,9 @@ internal sealed class OverlayContext : ApplicationContext
 
     private bool ObserveSelection()
     {
+        var previousView = _pendingRouteStatus.ViewKey;
         _pendingRouteStatus = _routeMonitor.GetStatus();
+        if (previousView != _pendingRouteStatus.ViewKey) _inlineIssue = null;
         if (!_selection.Observe(_pendingRouteStatus, _manualThreadId, _selectionRevision)) return false;
         _cost = null;
         _costDetails?.SetResult(_pendingThreadId, null);
@@ -668,7 +670,7 @@ internal sealed class OverlayContext : ApplicationContext
 
     private void RefreshPresentation()
     {
-        var state = (_lastSnapshot, _cost, _pendingRouteStatus, _manualThreadId, _pendingError,
+        var state = (_lastSnapshot, _cost, _pendingRouteStatus, _manualThreadId, _pendingError ?? _inlineIssue,
             _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField, _settings.VisibleFields, _identifyInFlight);
         if (_presentedState == state) return;
         _presentedState = state;
@@ -689,7 +691,8 @@ internal sealed class OverlayContext : ApplicationContext
             IsIdentifying = _identifyInFlight
         };
         if (_presentation.ShowIdentifyAction)
-            _presentation = _presentation with { StatusText = _identifyInFlight ? "正在识别当前对话…" : "同名对话，请点击右侧识别" };
+            _presentation = _presentation with { StatusText = _identifyInFlight ? "正在识别当前对话…" : _inlineIssue ?? "同名对话，请点击右侧识别" };
+        else if (_inlineIssue is not null) _presentation = _presentation with { StatusText = _inlineIssue };
         _form.SetPresentation(_presentation);
         _costDetails?.SetResult(_pendingThreadId, _cost);
     }
@@ -762,7 +765,7 @@ internal sealed class OverlayContext : ApplicationContext
         var target = _routeMonitor.CaptureBindingTarget();
         if (target is null)
         {
-            _trayIcon.ShowBalloonTip(5000, "当前对话无法绑定", "请打开 Codex 侧栏并显示要绑定的对话，稍候重试。", ToolTipIcon.Info);
+            SetInlineIssue("请打开 Codex 侧栏并显示目标对话后重试");
             return;
         }
         _bindingPickerOpen = true;
@@ -783,7 +786,7 @@ internal sealed class OverlayContext : ApplicationContext
                 {
                     _manualThreadId = null; _settings.PinnedThreadId = null;
                     _pinSessionMenuItem.Checked = false; _settings.Save(_settingsPath); _selectionRevision++;
-                    _trayIcon.ShowBalloonTip(4000, "已绑定当前对话", "切换对话后继续自动跟随；Codex 重启或侧栏条目重建后需重新核对。", ToolTipIcon.Info);
+                    _inlineIssue = null;
                 }
             }
         }
@@ -804,13 +807,14 @@ internal sealed class OverlayContext : ApplicationContext
     {
         if (_identifyInFlight) return;
         _identifyInFlight = true;
+        _inlineIssue = null;
         RefreshPresentation();
         try
         {
             var error = await _routeMonitor.IdentifyVisibleAsync();
             if (Volatile.Read(ref _disposed) != 0) return;
             if (error is not null)
-                _trayIcon.ShowBalloonTip(5000, "未能自动识别当前对话", error, ToolTipIcon.Info);
+                _inlineIssue = error;
             else
             {
                 var hadPinnedSetting = _settings.PinnedThreadId is not null;
@@ -818,7 +822,7 @@ internal sealed class OverlayContext : ApplicationContext
                 _pinSessionMenuItem.Checked = false;
                 if (hadPinnedSetting) _settings.Save(_settingsPath);
                 _selectionRevision++;
-                _trayIcon.ShowBalloonTip(3000, "已识别当前对话", "已读取当前对话链接，切换后继续自动跟随。", ToolTipIcon.Info);
+                _inlineIssue = null;
             }
         }
         finally
@@ -1071,11 +1075,7 @@ internal sealed class OverlayContext : ApplicationContext
         _settings.ResetToTitleBar();
         if (!_settings.TrySave(_settingsPath))
         {
-            _trayIcon.ShowBalloonTip(
-                3000,
-                "Codex Token 状态条",
-                "无法保存重置后的设置。",
-                ToolTipIcon.Warning);
+            SetInlineIssue("无法保存重置后的设置");
         }
 
         _interaction.CollapseForHostChange();
@@ -1182,12 +1182,9 @@ internal sealed class OverlayContext : ApplicationContext
         }
 
         _saveFailureNotified = true;
-        _trayIcon.ShowBalloonTip(
-            3000,
-            "Codex Token 状态条",
-            message,
-            ToolTipIcon.Warning);
+        SetInlineIssue(message);
     }
+    private void SetInlineIssue(string message) { _inlineIssue = message; RefreshPresentation(); }
 
     private Point CurrentCapsuleCenter()
     {

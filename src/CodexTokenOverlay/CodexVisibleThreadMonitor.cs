@@ -163,10 +163,11 @@ internal sealed class SessionTitleIndex
 internal sealed class CodexVisibleThreadMonitor : IDisposable
 {
     private sealed record BindingRequest(SidebarBindingTarget Target, string ThreadId, TaskCompletionSource<string?> Completion);
-    private sealed record IdentifyRequest(SidebarBindingTarget Target, TaskCompletionSource<string?> Completion,
+    private sealed record IdentifyRequest(long RootRevision, string DocumentKey, TaskCompletionSource<string?> Completion,
         CancellationTokenSource Cancellation)
     {
         public bool Started { get; set; }
+        public SidebarBindingTarget? Target { get; set; }
     }
     private readonly object _sync = new();
     private readonly CancellationTokenSource _cancellation = new();
@@ -262,10 +263,12 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
         lock (_sync)
         {
             if (_disposed != 0) return "工具已退出";
-            var target = CaptureBindingTarget();
-            if (target is null) return "请展开 Codex 侧栏，回到目标对话后点击识别";
+            // UI metadata can lag a recent navigation. Capture only the document and
+            // root here; the worker anchors the operation to a fresh current row.
+            if (_view is not { DocumentKey: not null } queuedView || _status.ActiveWindowCount != 1)
+                return "请展开 Codex 侧栏，回到目标对话后点击识别";
             CancelIdentify("识别操作已被更新的操作替换");
-            request = new(target, new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously), new());
+            request = new(_rootRevision, queuedView.DocumentKey, new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously), new());
             _identifyRequest = request;
         }
         _wake.Set();
@@ -349,9 +352,10 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                         if (_identifyRequest is { } queued)
                         {
                             identify = queued; identify.Started = true;
-                            if (rootRevision != _rootRevision || !queued.Target.Matches(rootRevision, _status.Version, view,
-                                view.WindowCount == 1 && view.Error is null))
+                            if (rootRevision != _rootRevision || queued.RootRevision != rootRevision || queued.DocumentKey != view.DocumentKey
+                                || view.WindowCount != 1 || view.Error is not null || view.Sidebar is not { Rows.Count: > 0 } || view.Title is null)
                                 copied = new(null, "识别期间切换了对话，请在目标对话重新点击识别");
+                            else queued.Target = new(rootRevision, _status.Version, SidebarSessionResolver.ViewKey(view), view.Title);
                         }
                     }
                     if (identify is not null && copied is null)
@@ -379,7 +383,7 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                                 && !identify.Completion.Task.IsCompleted && !identify.Cancellation.IsCancellationRequested;
                             if (publishIdentify)
                             {
-                                identifyError = !identify!.Target.Matches(rootRevision, _status.Version, view, connected)
+                                identifyError = identify!.Target is null || !identify.Target.Matches(rootRevision, _status.Version, view, connected)
                                     ? "识别期间切换了对话，请在目标对话重新点击识别"
                                     : copied?.Error ?? resolver.ResolveCopiedLink(before, view, copied?.Link, index.Titles, projects).Error;
                             }

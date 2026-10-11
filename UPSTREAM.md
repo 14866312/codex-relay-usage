@@ -1,6 +1,6 @@
 # 来源与修改说明
 
-定制项目：**Codex 用量助手 / Codex Usage Assistant 1.3.1**，2026-10-10。EXE 与配置标识保留 CodexRelayUsage。
+定制项目：**Codex 用量助手 / Codex Usage Assistant 1.3.3**，2026-10-11。EXE 与配置标识保留 CodexRelayUsage。
 
 上游：https://github.com/soleillevant0125/codex-token-overlay
 

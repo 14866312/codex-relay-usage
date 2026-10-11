@@ -60,5 +60,25 @@ internal static class IdentificationPipelineTests
             }
             finally { release.Set(); }
         }
+        // Real regression: a new same-title page is visible while the last cached row
+        // still belongs to the previous page. One click must refresh and identify it.
+        current = first; var reads = 0; var copyCalls = 0;
+        using var readingMetadata = new ManualResetEventSlim(); using var releaseMetadata = new ManualResetEventSlim();
+        using var freshMonitor = new CodexVisibleThreadMonitor(root, () =>
+        {
+            if (Interlocked.Increment(ref reads) == 2) { readingMetadata.Set(); releaseMetadata.Wait(TimeSpan.FromSeconds(2)); }
+            return Volatile.Read(ref current);
+        }, (view, _) => { copyCalls++; return new("codex://threads/" + (view.Sidebar!.Rows[0].NodeId == 20 ? b : a), null); });
+        try
+        {
+            Wait(() => freshMonitor.CaptureBindingTarget() is not null);
+            check("first-click regression holds the next metadata read", readingMetadata.Wait(TimeSpan.FromSeconds(1)));
+            Volatile.Write(ref current, second);
+            var oneClick = freshMonitor.IdentifyVisibleAsync(); releaseMetadata.Set();
+            var error = oneClick.GetAwaiter().GetResult();
+            check("first click refreshes lagging page metadata and resolves current row", error is null && freshMonitor.GetStatus().ThreadId == b);
+            check("first click performs one copy without requiring another click", copyCalls == 1);
+        }
+        finally { releaseMetadata.Set(); }
     }
 }

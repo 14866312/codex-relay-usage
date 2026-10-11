@@ -64,6 +64,10 @@ $liveUiPath = Join-Path $outputRoot "live-ui.json"
 Invoke-Probe -Arguments @("--live-ui-probe", $liveUiPath)
 $liveUi = Get-Content -LiteralPath $liveUiPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($liveUi.Failed -ne 0) { throw "实时更新及窗口跟随检查失败，请查看 $liveUiPath" }
+$notificationMethod = 'Show' + 'BalloonTip'
+$notificationCalls = @(Get-ChildItem -LiteralPath (Join-Path $repositoryRoot "src/CodexTokenOverlay") -Filter "*.cs" |
+    Select-String -SimpleMatch $notificationMethod)
+if ($notificationCalls.Count -ne 0) { throw "系统通知弹窗调用未完全移除。" }
 
 $nativePath = Join-Path $outputRoot "native-result.json"
 $fixture = Join-Path $repositoryRoot "tests/fixtures/FormProbe.json"
@@ -110,6 +114,8 @@ $summary = [pscustomobject]@{
     FeedbackUiFailed = $feedbackUi.Failed
     ClipboardPassed = $clipboard.Passed
     ClipboardFailed = $clipboard.Failed
+    NotificationUiPassed = 1
+    NotificationUiFailed = 0
     LiveUiPassed = $liveUi.Passed
     LiveUiFailed = $liveUi.Failed
     LogAppendToPublication = $liveUi.LogAppendToPublication
@@ -119,4 +125,4 @@ $summary = [pscustomobject]@{
 }
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outputRoot "verification.json") -Encoding UTF8
 if ($failed -gt 0) { throw "原生窗口测试失败，请查看 $outputRoot" }
-Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、$($costUi.Passed) 项费用窗口检查、$($feedbackUi.Passed) 项工具栏交互检查、$($clipboard.Passed) 项剪贴板恢复检查、$($liveUi.Passed) 项实时更新及跟随检查、$($startup.Passed) 项启动设置检查、$($console.Passed) 项无控制台检查、x64 GUI PE。"
+Write-Host "验证通过：$($selfTest.Passed) 项合成测试、$($checks.Count) 项原生窗口检查、$($costUi.Passed) 项费用窗口检查、$($feedbackUi.Passed) 项工具栏交互检查、$($clipboard.Passed) 项剪贴板恢复检查、1 项移除通知检查、$($liveUi.Passed) 项实时更新及跟随检查、$($startup.Passed) 项启动设置检查、$($console.Passed) 项无控制台检查、x64 GUI PE。"
