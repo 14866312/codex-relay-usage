@@ -30,6 +30,23 @@ The `*Tests.cs` classes and the synthetic self-test are intentionally compiled i
 
 History includes release titles and scoped prefixes such as `fix:`, `feat:`, and `ui:`. Use a concise imperative subject; use a prefix for focused changes (for example, `fix: preserve session selection`). PRs should explain user-visible behavior and rationale, list build/test results, link related issues when applicable, and include screenshots for UI changes. Call out Windows-only manual checks that remain.
 
+Commit every completed change as soon as its build and verification pass. Do not let finished work sit in the working tree across sessions or versions: commit before starting the next change, and split unrelated concerns into separate commits instead of one mixed one. Publish a release only from a clean working tree.
+
 ## Security and Local Data
 
 The app reads local Codex logs and estimates costs; never commit real session logs, credentials, or personal `prices.json`/settings files. Keep test data synthetic, and preserve the documented read-only behavior when changing log handling.
+
+## Documentation
+
+The long-term knowledge base lives in `docs/`; the index and the "when to update which file" checklist are in `docs/README.md`. Keep it in sync with the code:
+
+- User-visible behavior: update `CHANGELOG.md`, and the release record in `ACCEPTANCE.zh-CN.md` when releasing.
+- Architecture or mechanism: update `docs/architecture.md` or `docs/codex-integration.md`; add an ADR under `docs/adr/` when a decision is hard to reverse, surprising without context, and the result of a real trade-off.
+- Vocabulary: update `CONTEXT.md`.
+- Verification or release process: update `docs/verification.md`.
+
+## Agent skills
+
+### Domain docs
+
+Single-context: the glossary is `CONTEXT.md` at the repo root and decisions live in `docs/adr/`. See `docs/agents/domain.md`.

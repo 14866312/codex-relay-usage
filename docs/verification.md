@@ -1,0 +1,43 @@
+# 验证与发布流程
+
+## 构建与发布
+
+```powershell
+dotnet build .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release
+dotnet publish .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release -r win-x64 --self-contained true -o .\artifacts\verify
+.\scripts\Verify.ps1 -ExecutablePath .\artifacts\verify\CodexRelayUsage.exe
+```
+
+- 完整发布走 `\scripts\Publish-Local.ps1 -DotnetPath dotnet`：自包含 x64 EXE、独立 ZIP、源码 ZIP、SHA256 与预览图。
+- SDK 由 global.json 指定（已验证 10.0.401）；源码包排除 bin/obj、SDK、用户设置与真实日志。
+
+## 验证要求
+
+- `*Tests.cs` 与合成自检编译进发布 EXE，Verify.ps1 校验的就是用户拿到的同一份二进制（见 [ADR-0001](adr/0001-ship-tests-inside-release-exe.md)）；不要在发布路径上移出或加 `#if DEBUG`。
+- 每次改动通过构建与验证后立即提交，不要跨会话或跨版本累积未提交的工作树；发布时工作树应为干净状态（提交规范见 [AGENTS.md](../AGENTS.md)）。
+- Verify 需要可创建 WinForms 窗口的 Windows 桌面；使用合成日志与夹具，不依赖 Codex 登录或真实会话。
+- CI（windows-latest）构建后运行合成自检与 4 项 UI 探针：cost-ui-probe、feedback-ui-probe、live-ui-probe、clipboard-ui-probe。
+
+## 探针与诊断（只读）
+
+| 入口 | 用途 |
+|---|---|
+| --self-test | 合成自检 |
+| --view-probe | 主文档标题、侧栏行、项目标签、识别结果 |
+| --follow-probe | 会话切换与跟随（可选 --hidden） |
+| --sidebar-binding-probe | 当前页临时绑定核对 |
+| --cost-log-probe | 费用账本核对（内存合成价格） |
+| --speed-log-probe | 纯生成速度复算 |
+| --ipc-probe | IPC 订阅诊断（不用于生产识别） |
+
+这些输出含个人会话标识与元数据，留在本机，不加入源码或公开发布。
+
+## 交付验证记录与归档
+
+- 每个版本的验证记录追加到 ACCEPTANCE.zh-CN.md，内容含版本与日期、变更点、基线／修改对照、完整发布验证项数与结果、回滚说明。
+- 归档规则：主文件保留当前版本线（如 1.3.x）；新版本线开始时，旧版本线整体移入 ACCEPTANCE-archive.zh-CN.md（1.2.0 及更早已归档）。
+- 事务材料（原始／修改副本、差异补丁、验证记录、回滚脚本）保存在本机 artifacts/ 下，不随仓库分发；artifacts/ 已在 .gitignore 中。
+
+## 相关文档
+
+知识库更新时机见 [README.md](README.md)；提交与评审规范见 [AGENTS.md](../AGENTS.md)。
