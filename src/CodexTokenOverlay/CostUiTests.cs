@@ -113,6 +113,24 @@ internal static class CostUiTests
                 picker.ApplyTheme(OverlayThemePalette.For(OverlayThemeKind.Dark));
                 SavePreview(picker, Path.Combine(previewDirectory, "session-picker-dark.png"));
             }
+            using var binding = new SessionPickerForm(new[]
+            {
+                new SessionEntry("example-ui-session", "synthetic", new DateTime(2026, 10, 8, 10, 30, 0, DateTimeKind.Utc), 0, "D:/Projects/demo", "设计与更新用量界面")
+            }, "设计与更新用量界面");
+            using var bindingHost = ShowOffscreen(binding);
+            binding.PerformLayout();
+            var bindingCaption = Find<Label>(binding, "BindingCaption");
+            var bindingField = Find<FieldFrame>(binding, "SessionFilter");
+            var bindingList = Find<ListView>(binding, "SessionList");
+            var bindingTextHeight = TextRenderer.MeasureText(bindingCaption.Text, bindingCaption.Font,
+                new Size(bindingCaption.ClientSize.Width - bindingCaption.Padding.Horizontal, int.MaxValue), TextFormatFlags.WordBreak).Height;
+            Check("binding banner grows to fit its wrapped text",
+                bindingCaption.Height >= bindingTextHeight + bindingCaption.Padding.Vertical);
+            Check("binding banner text stays clear of the search field",
+                bindingCaption.Top + bindingCaption.Padding.Top + bindingTextHeight <= bindingField.Top);
+            Check("binding list starts below the search field", bindingList.Top >= bindingField.Bottom);
+            if (previewDirectory is not null)
+                SavePreview(binding, Path.Combine(previewDirectory, "session-picker-binding.png"));
             foreach (var scale in new[] { 1.25f, 1.5f })
             {
                 using var scaled = new ModelPriceForm(new(1, new[] { SessionCostTests.Profile() }), Array.Empty<string>(), pricePath);
