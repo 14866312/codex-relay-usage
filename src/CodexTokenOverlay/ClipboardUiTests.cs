@@ -2,14 +2,36 @@ namespace CodexTokenOverlay;
 
 internal static class ClipboardUiTests
 {
+    internal const int MaxAttempts = 3;
+
     internal static DiagnosticsRunner.SelfTestResult Run()
+    {
+        DiagnosticsRunner.SelfTestResult result = new(0, 0, []);
+        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+        {
+            result = RunAttempt(attempt);
+            // The clipboard is a global resource: a clipboard manager or another
+            // foreground process can legitimately race this synthetic probe. A
+            // deterministic regression fails every attempt, so only retry when
+            // the previous attempt was not clean.
+            if (result.Failed == 0) return result;
+            if (attempt < MaxAttempts) Thread.Sleep(150);
+        }
+        return result;
+    }
+
+    private static DiagnosticsRunner.SelfTestResult RunAttempt(int attempt)
     {
         var checks = new List<DiagnosticsRunner.TestResult>();
         void Check(string name, bool passed) => checks.Add(new(name, passed, passed ? null : "assertion failed"));
-        using var original = ClipboardSnapshot.Capture();
+        ClipboardSnapshot? original = null;
         var ours = CurrentConversationLink.GetClipboardSequenceNumber();
         try
         {
+            // Capture itself can hit a transient OLE lock (CLIPBRD_E_CANT_OPEN);
+            // keeping it inside the try turns a hard probe crash (exit 0xE0434352,
+            // no result file) into a failed attempt the retry loop can absorb.
+            original = ClipboardSnapshot.Capture();
             var fixture = new DataObject();
             fixture.SetData(DataFormats.UnicodeText, false, "original fixture text");
             fixture.SetData(DataFormats.Html, false, "<b>original fixture</b>");
@@ -47,8 +69,8 @@ internal static class ClipboardUiTests
             using var restoredImage = Clipboard.GetImage() as Bitmap;
             Check("image clipboard pixel data is retained", restoredImage?.GetPixel(1, 1) == bitmap.GetPixel(1, 1));
         }
-        catch (Exception error) { checks.Add(new("clipboard UI probe exception " + error.GetType().Name, false, error.Message)); }
-        finally { original.RestoreIfUnchanged(ours); }
+        catch (Exception error) { checks.Add(new("clipboard UI probe exception " + error.GetType().Name, false, "attempt " + attempt + ": " + error.Message)); }
+        finally { original?.RestoreIfUnchanged(ours); original?.Dispose(); }
         return new(checks.Count(c => c.Passed), checks.Count(c => !c.Passed), checks);
     }
 }
