@@ -7,7 +7,7 @@ internal static class StartupHost
     public static bool TryRun(string[] args)
     {
         var install = args.Contains("--install-startup") || args.Contains("--remove-startup");
-        if (!install && !args.Contains("--launch-codex")) return false;
+        if (!install) return false;
         try
         {
             var start = new ProcessStartInfo
@@ -20,7 +20,7 @@ internal static class StartupHost
                 WindowStyle = ProcessWindowStyle.Hidden
             };
             foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-                Path.Combine(AppContext.BaseDirectory, "scripts", install ? "Install-CodexStartup.ps1" : "Start-CodexAuto.ps1") })
+                Path.Combine(AppContext.BaseDirectory, "scripts", "Install-CodexStartup.ps1") })
                 start.ArgumentList.Add(argument);
             if (args.Contains("--remove-startup")) start.ArgumentList.Add("-Remove");
             using var child = Process.Start(start) ?? throw new InvalidOperationException("启动失败");

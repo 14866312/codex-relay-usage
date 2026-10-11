@@ -1,6 +1,14 @@
 # 交付验证记录
 
-版本 1.3.4，Windows x64，2026-10-11。以下区分本次检查、历史版本记录，以及待实际操作的场景。
+版本 1.3.5，Windows x64，2026-10-11。以下区分本次检查、历史版本记录，以及待实际操作的场景。
+
+## 1.3.5 移除 VBS 启动入口
+
+基线（1.3.3 包）实测：CodexRelayUsage.exe --launch-codex 会路由到 scripts/Start-CodexAuto.ps1（桩脚本记录到调用），双击 `启动 Codex 自动用量.vbs` 同样落到该脚本。修改后包内不再包含 `启动 Codex 自动用量.vbs`、scripts/Launch-Package.vbs 与 scripts/Start-CodexAuto.ps1；--launch-codex 不再被 StartupHost 截获，直接进入图形工具（用 --self-test 验证：exit 0，Failed 0）。
+
+- 变更点：StartupHost.cs 只处理 --install-startup／--remove-startup；Program.cs 将 --launch-codex 从启动路由中移除；Publish-Local.ps1 不再复制启动入口；Test-CodexStartup.ps1 新增“旧入口未随包发布”断言；Test-ConsoleFreeStartup.ps1 只覆盖“设置开机自动启动.vbs”。
+- 三段对照材料（基线、修改副本、差异补丁、验证记录、可执行回滚脚本）保存在本机事务目录，未上传。
+- 完整发布验证：430 项合成、20 项原生窗口、29 项费用窗口、67 项工具栏交互、8 项剪贴板恢复、1 项移除通知、64 项实时更新与跟随、33 项启动设置、2 项无控制台检查通过；总计 654 项，零失败。
 
 ## 1.3.4 移除桌面／开始菜单快捷方式写入
 

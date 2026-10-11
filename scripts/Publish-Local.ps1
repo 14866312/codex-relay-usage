@@ -27,10 +27,9 @@ foreach ($name in @("README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-
 }
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party") -Destination $binaryDirectory -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $binaryDirectory "scripts") -Force | Out-Null
-foreach ($launcher in @("Start-CodexAuto.ps1", "Install-CodexStartup.ps1", "Launch-Package.vbs", "Install-Startup-Package.vbs")) {
+foreach ($launcher in @("Install-CodexStartup.ps1", "Install-Startup-Package.vbs")) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $launcher) -Destination (Join-Path $binaryDirectory "scripts") -Force
 }
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Launch-Package.vbs") -Destination (Join-Path $binaryDirectory "启动 Codex 自动用量.vbs") -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Install-Startup-Package.vbs") -Destination (Join-Path $binaryDirectory "设置开机自动启动.vbs") -Force
 & (Join-Path $PSScriptRoot "Verify.ps1") -ExecutablePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -OutputDirectory (Join-Path $binaryDirectory "verification")
 $previewDirectory = Join-Path $repositoryRoot "previews"

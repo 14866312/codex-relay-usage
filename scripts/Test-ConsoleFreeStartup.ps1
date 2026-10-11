@@ -9,23 +9,19 @@ try {
     # Literal source: keep the child script's PSScriptRoot.
     $probe = 'Add-Type -TypeDefinition ''using System; using System.Runtime.InteropServices; public class ConsoleProbe { [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow(); }''' + [Environment]::NewLine +
         '[IO.File]::WriteAllText((Join-Path $PSScriptRoot ''../console-handle.txt''),[ConsoleProbe]::GetConsoleWindow().ToInt64().ToString())'
-    foreach ($scriptName in @('Start-CodexAuto.ps1', 'Install-CodexStartup.ps1')) {
-        [IO.File]::WriteAllText((Join-Path $fixture ('scripts/' + $scriptName)), $probe)
-    }
+    [IO.File]::WriteAllText((Join-Path $fixture 'scripts/Install-CodexStartup.ps1'), $probe)
     $handleFile = Join-Path $fixture 'console-handle.txt'
-    foreach ($entry in @('Launch-Package.vbs', 'Install-Startup-Package.vbs')) {
-        $source = Get-Content -LiteralPath (Join-Path $PackageRoot ('scripts/' + $entry)) -Raw
-        $source = $source.Replace(' --install-startup', ' --install-startup --quiet')
-        $entryPath = Join-Path $fixture $entry
-        [IO.File]::WriteAllText($entryPath, $source, [Text.Encoding]::ASCII)
-        $process = Start-Process -FilePath "$env:SystemRoot/System32/wscript.exe" -ArgumentList @('//B', '//NoLogo', ('"' + $entryPath + '"')) -WindowStyle Hidden -PassThru
-        if (-not $process.WaitForExit(15000)) { $process.Kill(); throw 'VBS entry timed out' }
-        $deadline = [DateTime]::UtcNow.AddSeconds(15)
-        while (-not (Test-Path -LiteralPath $handleFile) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
-        if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $handleFile) -or (Get-Content -LiteralPath $handleFile) -ne '0') { throw ($entry + ' created a console or did not execute the native host') }
-        $process.Dispose(); $checks++
-        Remove-Item -LiteralPath $handleFile
-    }
+    $source = Get-Content -LiteralPath (Join-Path $PackageRoot 'scripts/Install-Startup-Package.vbs') -Raw
+    $source = $source.Replace(' --install-startup', ' --install-startup --quiet')
+    $entryPath = Join-Path $fixture 'Install-Startup-Package.vbs'
+    [IO.File]::WriteAllText($entryPath, $source, [Text.Encoding]::ASCII)
+    $process = Start-Process -FilePath "$env:SystemRoot/System32/wscript.exe" -ArgumentList @('//B', '//NoLogo', ('"' + $entryPath + '"')) -WindowStyle Hidden -PassThru
+    if (-not $process.WaitForExit(15000)) { $process.Kill(); throw 'VBS entry timed out' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    while (-not (Test-Path -LiteralPath $handleFile) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
+    if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $handleFile) -or (Get-Content -LiteralPath $handleFile) -ne '0') { throw 'the startup VBS entry created a console or did not execute the native host' }
+    $process.Dispose(); $checks++
+    Remove-Item -LiteralPath $handleFile
     $report = Join-Path $fixture 'legacy-self-test.json'
     $process = Start-Process -FilePath (Join-Path $fixture 'CodexRelayUsage.exe') -ArgumentList @('--watch-codex', '--self-test', ('"' + $report + '"')) -WindowStyle Hidden -PassThru
     if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Legacy startup flag still enters a watcher host' }

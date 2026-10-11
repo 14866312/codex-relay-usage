@@ -8,6 +8,9 @@ foreach ($script in Get-ChildItem (Join-Path $FixtureRoot 'scripts') -Filter '*.
     [Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$errors) | Out-Null
     Check ($errors.Count -eq 0) ('PS5 parse ' + $script.Name)
 }
+foreach ($retired in @('启动 Codex 自动用量.vbs', 'scripts/Launch-Package.vbs', 'scripts/Start-CodexAuto.ps1')) {
+    Check (-not (Test-Path -LiteralPath (Join-Path $FixtureRoot $retired))) ('retired Codex launch entry is gone: ' + $retired)
+}
 $links = Join-Path $FixtureRoot ('isolated-' + [Guid]::NewGuid().ToString('N'))
 try {
     foreach ($folder in @('Desktop', 'Programs', 'Startup')) { New-Item -ItemType Directory (Join-Path $links $folder) -Force | Out-Null }

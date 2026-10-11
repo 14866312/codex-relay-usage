@@ -1,6 +1,6 @@
 # 来源与修改说明
 
-定制项目：**Codex 用量助手 / Codex Usage Assistant 1.3.4**，2026-10-11。EXE 与配置标识保留 CodexRelayUsage。
+定制项目：**Codex 用量助手 / Codex Usage Assistant 1.3.5**，2026-10-11。EXE 与配置标识保留 CodexRelayUsage。
 
 上游：https://github.com/soleillevant0125/codex-token-overlay
 
@@ -33,3 +33,5 @@
 1.3.1 修正上述识别假设：后台订阅不能证明当前页面身份，改为用户点击时调用 Codex 的复制深度链接命令，取得当前页面 ID，并暂存及恢复本机剪贴板。移除监视器对最新 IPC 订阅的依赖，保留只读路由与侧栏元数据识别。新增代码及测试归本衍生项目，未增加 UI 框架或 NuGet 依赖。
 
 1.3.4 删除创建与改写用户桌面／开始菜单 Codex 快捷方式的入口；开机启动只写登录快捷方式，旧入口清理时还原原备份。未改动上游代码与费用逻辑。
+
+1.3.5 删除“启动 Codex 自动用量.vbs”启动入口与 --launch-codex 启动路由；启动设置入口保留。未改动上游代码与费用逻辑。
