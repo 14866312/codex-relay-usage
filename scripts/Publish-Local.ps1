@@ -22,7 +22,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "发布构建失败。" }
 } finally { Pop-Location }
 
-foreach ($name in @("README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-CN.md", "CHANGELOG.md")) {
+foreach ($name in @("README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-CN.md", "ACCEPTANCE-archive.zh-CN.md", "CHANGELOG.md")) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $name) -Destination $binaryDirectory -Force
 }
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party") -Destination $binaryDirectory -Recurse -Force
@@ -54,7 +54,7 @@ $stream = [System.IO.File]::Open($sourceArchive, [System.IO.FileMode]::Create)
 $zip = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Create)
 try {
     $sourceFiles = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
-    foreach ($name in @(".gitignore", "global.json", "README.md", "README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-CN.md", "CHANGELOG.md")) {
+    foreach ($name in @(".gitignore", "global.json", "README.md", "README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-CN.md", "ACCEPTANCE-archive.zh-CN.md", "CHANGELOG.md")) {
         $sourceFiles.Add((Get-Item -LiteralPath (Join-Path $repositoryRoot $name) -Force))
     }
     foreach ($folder in @("src", "scripts", "tests", "third_party", "previews")) {
