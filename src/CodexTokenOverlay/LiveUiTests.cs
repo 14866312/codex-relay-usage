@@ -112,12 +112,20 @@ internal static class LiveUiTests
         var invalidations = 0; strip.Invalidated += (_, _) => invalidations++;
         strip.SetPresentation(presentation with { ExpandedRows = presentation.ExpandedRows.ToArray() });
         check("equivalent presentation does not schedule another repaint", invalidations == 0);
-        var oldWidth = target.HostWindow.WindowBounds.Width; host.Width += 120;
-        var resized = PumpUntil(() => target.HostWindow.WindowBounds.Width == oldWidth + 120);
+        // A headless runner exposes a small virtual desktop where the window manager clamps
+        // a window to its maximum tracking size, so growing the host silently stops at the
+        // clamp. Shrinking is never clamped: resize down and expect the rectangle the host
+        // actually received instead of assuming the requested delta survived.
+        var oldWidth = target.HostWindow.WindowBounds.Width;
+        host.Width = Math.Max(600, oldWidth - 120);
+        var expectedWidth = host.Width;
+        var resized = expectedWidth < oldWidth
+            && PumpUntil(() => target.HostWindow.WindowBounds.Width == expectedWidth);
         check(resized
             ? "resize refreshes live host dimensions"
             : "resize refreshes live host dimensions (old=" + oldWidth + " host=" + host.Width
-                + " target=" + target.HostWindow.WindowBounds.Width + " bounds=" + host.Bounds + " dpi=" + host.DeviceDpi + ")",
+                + " expected=" + expectedWidth + " target=" + target.HostWindow.WindowBounds.Width
+                + " bounds=" + host.Bounds + " dpi=" + host.DeviceDpi + ")",
             resized);
         strip.ApplyLayout(Layout(expanded: true)); strip.FinishFeedbackAnimation();
         var expandedRegion = strip.Region; var expandedState = strip.FeedbackFrame;
