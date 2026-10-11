@@ -1,19 +1,8 @@
-﻿param([switch]$Restart, [switch]$CreateShortcut)
+﻿param([switch]$Restart)
 $ErrorActionPreference = 'Stop'
 $releaseRoot = Split-Path -Parent $PSScriptRoot
 $overlay = Join-Path $releaseRoot 'CodexRelayUsage.exe'
 if (-not (Test-Path -LiteralPath $overlay)) { throw '请从 Windows 独立版目录运行此入口。' }
-if ($CreateShortcut) {
-    $desktop = [Environment]::GetFolderPath('Desktop')
-    $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut((Join-Path $desktop 'Codex 自动用量.lnk'))
-    $shortcut.TargetPath = $overlay
-    $shortcut.Arguments = '--launch-codex'
-    $shortcut.WorkingDirectory = $releaseRoot
-    $shortcut.IconLocation = $overlay
-    $shortcut.Save()
-    exit
-}
 try {
     $package = Get-AppxPackage | Where-Object { $_.Name -eq 'OpenAI.Codex' } | Sort-Object Version -Descending | Select-Object -First 1
     if (-not $package) { throw '未找到已安装的 Codex 应用。' }

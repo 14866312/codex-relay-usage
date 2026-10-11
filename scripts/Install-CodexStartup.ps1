@@ -6,7 +6,7 @@ $powerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powersh
 $stateRoot = Join-Path $env:LOCALAPPDATA 'CodexRelayUsage/startup'
 if (-not $Remove -and -not (Test-Path -LiteralPath $overlay)) { throw '请从 Windows 独立版目录安装。' }
 if ($ShortcutRoot) {
-    # Isolated installer fixture; never changes real tasks, processes or shortcuts.
+    # Isolated installer fixture; never changes real tasks or processes.
     $desktop = Join-Path $ShortcutRoot 'Desktop'
     $programs = Join-Path $ShortcutRoot 'Programs'
     $startup = Join-Path $ShortcutRoot 'Startup'
@@ -42,11 +42,8 @@ $shell = New-Object -ComObject WScript.Shell
 $legacyDescription = 'Codex 与会话用量自动启动'
 $loginDescription = 'Codex 会话用量：登录 Windows 自动启动'
 $entries = @(
-    @{ Path = (Join-Path $desktop 'Codex.lnk'); Arguments = '--launch-codex'; Backup = 'desktop.lnk'; Description = $legacyDescription },
-    @{ Path = (Join-Path $programs 'Codex.lnk'); Arguments = '--launch-codex'; Backup = 'programs.lnk'; Description = $legacyDescription },
     @{ Path = (Join-Path $startup 'Codex 用量自动启动.lnk'); Arguments = ''; Backup = 'startup.lnk'; Description = $loginDescription }
 )
-$package = if (-not $Remove) { Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1 }
 foreach ($entry in $entries) {
     $backup = Join-Path $stateRoot $entry.Backup
     $link = if (Test-Path -LiteralPath $entry.Path) { $shell.CreateShortcut($entry.Path) } else { $null }
@@ -77,10 +74,26 @@ foreach ($entry in $entries) {
     $link.Arguments = $entry.Arguments
     $link.WorkingDirectory = $releaseRoot
     $link.Description = $entry.Description
-    $link.IconLocation = if ($entry.Arguments -and $package) { Join-Path $package.InstallLocation 'app/ChatGPT.exe' } else { $overlay }
+    $link.IconLocation = $overlay
     $link.Save()
+}
+# Older releases replaced the desktop and Start Menu Codex entries; only their cleanup remains.
+foreach ($stale in @(
+    @{ Path = (Join-Path $desktop 'Codex.lnk'); Backup = 'desktop.lnk' },
+    @{ Path = (Join-Path $programs 'Codex.lnk'); Backup = 'programs.lnk' })) {
+    if (-not (Test-Path -LiteralPath $stale.Path)) { continue }
+    $staleLink = $shell.CreateShortcut($stale.Path)
+    if ($staleLink.Description -notin @($legacyDescription, $loginDescription)) { continue }
+    $isNative = [IO.Path]::GetFileName($staleLink.TargetPath) -eq 'CodexRelayUsage.exe' -and
+        $staleLink.Arguments -in @('--launch-codex', '--watch-codex')
+    $isLegacyScript = $staleLink.TargetPath -eq $powerShell -and $staleLink.Description -eq $legacyDescription -and
+        $staleLink.Arguments -match '(?:Start-CodexAuto|Watch-Codex)\.ps1"?\s*$'
+    if (-not ($isNative -or $isLegacyScript)) { continue }
+    Remove-Item -LiteralPath $stale.Path
+    $staleBackup = Join-Path $stateRoot $stale.Backup
+    if (Test-Path -LiteralPath $staleBackup) { Move-Item -LiteralPath $staleBackup -Destination $stale.Path }
 }
 if (-not $ShortcutRoot -and -not $Remove -and -not $NoStart) {
     Start-Process -FilePath $overlay -WorkingDirectory $releaseRoot -WindowStyle Hidden
 }
-Write-Host $(if ($Remove) { '已取消开机自动启动并恢复已备份的普通入口。' } else { '已设置登录 Windows 后直接启动工具；Codex 打开后悬浮条自动出现。' })
+Write-Host $(if ($Remove) { '已取消开机自动启动，并清理旧版写入的桌面／开始菜单入口。' } else { '已设置登录 Windows 后直接启动工具；Codex 打开后悬浮条自动出现。' })
