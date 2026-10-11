@@ -27,7 +27,30 @@ internal static class CurrentConversationLink
             return new(null, "请回到要识别的 Codex 对话后重试");
         if (ModifierKeys.Any(key => (GetAsyncKeyState(key) & 0x8000) != 0))
             return new(null, "请松开键盘修饰键后再点击识别");
-        ClipboardSnapshot? snapshot = null;
+        return PreserveCopy(
+            ClipboardSnapshot.Capture,
+            CopyShortcut,
+            GetClipboardSequenceNumber,
+            () => IsClipboardFrom(processId),
+            () => Clipboard.GetText(TextDataFormat.UnicodeText),
+            () => IsForegroundHost(host),
+            cancellationToken);
+    }
+
+    // Separated from Read so a synthetic test can drive every branch of the
+    // copy-poll-restore sequence without touching the machine-wide clipboard or
+    // injecting keystrokes. Read passes the real platform operations; the tests
+    // pass scripted doubles.
+    internal static CopiedConversationLink PreserveCopy(
+        Func<IClipboardPreservation> capture,
+        Func<bool> copyShortcut,
+        Func<uint> sequenceNumber,
+        Func<bool> clipboardOwnedByHost,
+        Func<string?> readClipboardText,
+        Func<bool> isForegroundHost,
+        CancellationToken cancellationToken)
+    {
+        IClipboardPreservation? snapshot = null;
         uint copiedSequence = 0;
         var restoreFailed = false;
         CopiedConversationLink result;
@@ -36,22 +59,22 @@ internal static class CurrentConversationLink
             cancellationToken.ThrowIfCancellationRequested();
             // Materialize before copying. Keeping only an OLE proxy is insufficient:
             // its old provider may no longer render data after clipboard replacement.
-            snapshot = ClipboardSnapshot.Capture();
-            if (!IsForegroundHost(host) || GetClipboardSequenceNumber() != snapshot.Sequence)
+            snapshot = capture();
+            if (!isForegroundHost() || sequenceNumber() != snapshot.Sequence)
                 return new(null, "页面或剪贴板已变化，请重新点击识别");
-            if (!CopyShortcut()) return new(null, "无法调用 Codex 的复制链接命令");
+            if (!copyShortcut()) return new(null, "无法调用 Codex 的复制链接命令");
             var clock = Stopwatch.StartNew();
             result = new(null, "Codex 未提供对话链接，请确认 Ctrl+Alt+L 可以复制深度链接");
             while (clock.ElapsedMilliseconds < 1800)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var sequence = GetClipboardSequenceNumber();
-                if (sequence != snapshot.Sequence && IsClipboardFrom(processId))
+                var sequence = sequenceNumber();
+                if (sequence != snapshot.Sequence && clipboardOwnedByHost())
                 {
                     try
                     {
-                        var text = Clipboard.GetText(TextDataFormat.UnicodeText);
-                        if (sequence == GetClipboardSequenceNumber() && ThreadId(text) is not null)
+                        var text = readClipboardText();
+                        if (sequence == sequenceNumber() && ThreadId(text) is not null)
                         {
                             copiedSequence = sequence;
                             result = new(text, null);
@@ -60,7 +83,7 @@ internal static class CurrentConversationLink
                     }
                     catch (ExternalException) { }
                 }
-                if (!IsForegroundHost(host))
+                if (!isForegroundHost())
                 {
                     result = new(null, "识别期间离开了当前对话，请重新点击识别");
                     break;
@@ -81,9 +104,9 @@ internal static class CurrentConversationLink
             // Restore only our own copied link. An intervening user copy wins.
             if (snapshot is not null && copiedSequence != 0)
             {
-                var shouldRestore = GetClipboardSequenceNumber() == copiedSequence;
+                var shouldRestore = sequenceNumber() == copiedSequence;
                 restoreFailed = shouldRestore && !snapshot.RestoreIfUnchanged(copiedSequence)
-                    && GetClipboardSequenceNumber() == copiedSequence;
+                    && sequenceNumber() == copiedSequence;
             }
             snapshot?.Dispose();
         }
@@ -136,13 +159,23 @@ internal static class CurrentConversationLink
     [DllImport("user32.dll")] internal static extern uint GetClipboardSequenceNumber();
 }
 
-internal sealed class ClipboardSnapshot : IDisposable
+// The preservation contract the identification flow depends on. Kept as an
+// interface so the copy-poll-restore sequence can be tested with a scripted
+// snapshot instead of the real machine-wide clipboard.
+internal interface IClipboardPreservation : IDisposable
+{
+    uint Sequence { get; }
+    bool Restored { get; }
+    bool RestoreIfUnchanged(uint expectedSequence);
+}
+
+internal sealed class ClipboardSnapshot : IClipboardPreservation
 {
     private readonly DataObject _data = new();
     private readonly List<IDisposable> _owned = [];
     private bool _empty;
-    internal uint Sequence { get; private set; }
-    internal bool Restored { get; private set; }
+    public uint Sequence { get; private set; }
+    public bool Restored { get; private set; }
     // Diagnostic equality only; never expose clipboard contents in a report.
     internal string Fingerprint()
     {
@@ -202,7 +235,7 @@ internal sealed class ClipboardSnapshot : IDisposable
         }
         catch { snapshot.Dispose(); throw; }
     }
-    internal bool RestoreIfUnchanged(uint expectedSequence)
+    public bool RestoreIfUnchanged(uint expectedSequence)
     {
         for (var attempt = 0; attempt < 8; attempt++)
         {

@@ -206,6 +206,7 @@ internal static class SyntheticSelfTests
             Check("settings persistence", loaded.PinnedThreadId == "b" && loaded.SessionRoot == directory && loaded.CollapsedSecondaryField == DisplayField.CacheHitRate);
             Check("corrupt settings recover", OverlaySettings.ParseJson("bad-json").Settings.CollapsedPrimaryField == DisplayField.Total);
             ClipboardRetryTests.Run(Check);
+            ClipboardPreservationTests.Run(Check);
             TitleBarPlacementTests.Run(Check, directory);
             ConversationSwitchTests.Run(Check, directory);
             SidebarIdentificationTests.Run(Check, directory);
