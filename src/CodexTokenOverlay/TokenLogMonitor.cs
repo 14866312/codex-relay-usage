@@ -224,6 +224,8 @@ internal sealed class IncrementalSessionReader(string path, string threadId) : I
     private string? _lastRecordTurn;
     private double _speedOutput, _speedSeconds, _completionGenerationSeconds;
     private string? _speedTurn, _completionTurn;
+    private double _generationSeconds, _toolSeconds;
+    private string? _currentTurn;
     private long? _total, _input, _cache, _output, _reasoning, _contextUsed, _contextWindow;
     private string? _model, _parseIssue;
     private SessionUsageLedger _ledger = new(threadId);
@@ -277,7 +279,8 @@ internal sealed class IncrementalSessionReader(string path, string threadId) : I
             _contextUsed, _contextWindow, _updatedUtc, _model, _turns.Count,
             issues.Length == 0 ? live?.ParseIssue : string.Join("；", issues), _usageRecorded || live is not null,
             live is null ? _totalTokenInvalid : live.ParseIssue?.Contains("total_tokens", StringComparison.Ordinal) == true, ledger,
-            _runningTurns.Count > 0, _liveUsage.Source, OutputSpeed);
+            _runningTurns.Count > 0, _liveUsage.Source, OutputSpeed,
+            SpeedGenerationOnly, _generationSeconds > 0 ? _generationSeconds : null, _toolSeconds > 0 ? _toolSeconds : null);
         _snapshotOffset = _offset;
         return Snapshot;
     }
@@ -295,6 +298,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId) : I
         _model = _parseIssue = null; _updatedUtc = default; Snapshot = null;
         _turnStartUtc = _lastRecordUtc = default; _lastRecordTurn = null; _speedOutput = 0; _speedSeconds = 0;
         _completionGenerationSeconds = 0; _completionTurn = null; _speedTurn = null;
+        _generationSeconds = 0; _toolSeconds = 0; _currentTurn = null;
         _ledger = new(threadId);
         _liveUsage = new(); _runningTurns.Clear();
     }
@@ -338,6 +342,10 @@ internal sealed class IncrementalSessionReader(string path, string threadId) : I
                 _turnStartUtc = Timestamp(root) ?? default;
                 _lastRecordUtc = default; _lastRecordTurn = turn;
                 _completionGenerationSeconds = 0; _completionTurn = null;
+                // Item timings and the reported numerator belong to one turn; a new turn
+                // never inherits the previous turn's seconds.
+                _currentTurn = turn; _generationSeconds = 0; _toolSeconds = 0;
+                _speedOutput = 0; _speedSeconds = 0;
                 return;
             }
             if (eventType is "task_complete" or "task_completed")
@@ -353,6 +361,11 @@ internal sealed class IncrementalSessionReader(string path, string threadId) : I
                 if (String(payload, "turn_id") is { } aborted) _runningTurns.Remove(aborted);
                 else _runningTurns.Clear();
                 _completionGenerationSeconds = 0; _completionTurn = null;
+                return;
+            }
+            if (eventType == "item_completed")
+            {
+                ObserveItem(payload);
                 return;
             }
             if (eventType != "token_count" || !payload.TryGetProperty("info", out var usage) || usage.ValueKind != JsonValueKind.Object) return;
@@ -427,7 +440,32 @@ internal sealed class IncrementalSessionReader(string path, string threadId) : I
         if (turn is not null && _speedOutput > 0 && string.Equals(_speedTurn, turn, StringComparison.Ordinal))
             _speedSeconds = window;
     }
-    private double? OutputSpeed => _speedSeconds >= 1 && _speedOutput > 0 ? _speedOutput / _speedSeconds : null;
+    // Item-completed events carry the per-item generation window the relay reports as
+    // tokens per second. Only items of the current turn with a sane duration count;
+    // everything else falls back to the wall-clock or completion window.
+    private void ObserveItem(JsonElement payload)
+    {
+        if (_currentTurn is null || !string.Equals(String(payload, "turn_id"), _currentTurn, StringComparison.Ordinal)) return;
+        if (!payload.TryGetProperty("item", out var item) || item.ValueKind != JsonValueKind.Object) return;
+        if (Number(payload, "started_at_ms", []) is not { } started || Number(payload, "completed_at_ms", []) is not { } completed) return;
+        var durationMs = completed - started;
+        if (durationMs <= 0 || durationMs > 3_600_000) return;
+        switch (String(item, "type"))
+        {
+            case "Reasoning" or "AgentMessage": _generationSeconds += durationMs / 1000d; break;
+            case "CommandExecution" or "FileChange" or "McpToolCall": _toolSeconds += durationMs / 1000d; break;
+        }
+    }
+    private double? OutputSpeed
+    {
+        get
+        {
+            if (_speedOutput <= 0) return null;
+            if (_generationSeconds >= 1) return _speedOutput / _generationSeconds;
+            return _speedSeconds >= 1 ? _speedOutput / _speedSeconds : null;
+        }
+    }
+    private bool SpeedGenerationOnly => _speedOutput > 0 && _generationSeconds >= 1;
     internal static string? String(JsonElement element, string name) => element.ValueKind == JsonValueKind.Object &&
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
     private static long? Number(JsonElement element, string name, List<string> issues)

@@ -48,6 +48,8 @@ internal static class OverlayPresentationBuilder
     private static OverlayMetric Metric(TokenSnapshot s, DisplayField field, bool compact, SessionCostResult? cost = null)
     {
         var labels = Labels(field);
+        if (field == DisplayField.Speed)
+            labels = (labels.Compact, s.SpeedGenerationOnly ? "输出速度（纯生成）" : "输出速度（本轮平均）");
         string Number(long? number, bool valid = true) => number.HasValue && (!TokenSnapshot.Valid(number) || !valid)
             ? "异常" : number.HasValue ? (compact ? FormatTokenCount(number) : number.Value.ToString("N0", Invariant)) + (compact ? "" : " tok")
             : compact ? "—" : "— / 未提供";
@@ -103,7 +105,7 @@ internal static class OverlayPresentationBuilder
         DisplayField.ContextPercent => ("上下文", "上下文占用（最近调用估算）"),
         DisplayField.Reasoning => ("推理", "推理输出（已含在输出）"), DisplayField.Thread => ("会话", "会话"),
         DisplayField.Cost => ("费用", "会话费用估算"),
-        DisplayField.Speed => ("速度", "输出速度（本轮平均）"),
+        DisplayField.Speed => ("速度", "输出速度"),
         _ => throw new ArgumentOutOfRangeException(nameof(f))
     };
     private static string Clean(string text) => new(text.Where(c => !char.IsControl(c)).ToArray());

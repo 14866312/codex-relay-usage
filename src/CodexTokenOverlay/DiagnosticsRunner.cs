@@ -46,6 +46,12 @@ internal static class DiagnosticsRunner
             File.WriteAllText(args[1], JsonSerializer.Serialize(result, JsonOptions));
             Environment.ExitCode = result.ReadSucceeded && result.FormulaMatches ? 0 : 1; return true;
         }
+        if (args[0] == "--speed-log-probe" && args.Count > 2)
+        {
+            var result = SpeedLogProbe.Run(root, args[2]);
+            File.WriteAllText(args[1], JsonSerializer.Serialize(result, JsonOptions));
+            Environment.ExitCode = result.ReadSucceeded && result.HasSpeed ? 0 : 1; return true;
+        }
         if (args[0] == "--cost-ui-probe")
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); Application.EnableVisualStyles();

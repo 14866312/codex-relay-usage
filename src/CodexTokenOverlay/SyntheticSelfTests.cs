@@ -34,6 +34,8 @@ internal static class SyntheticSelfTests
         string Complete(string turn, long? durationMs, long? ttfbMs) => JsonSerializer.Serialize(new { timestamp = "2026-10-02T10:09:00Z", type = "event_msg",
             payload = durationMs is null ? (object)new { type = "task_complete", turn_id = turn }
                 : new { type = "task_complete", turn_id = turn, duration_ms = durationMs.Value, time_to_first_token_ms = ttfbMs ?? 0L } });
+        string Item(string turn, string type, long startedMs, long completedMs) => JsonSerializer.Serialize(new { timestamp = "2026-10-02T11:00:01Z", type = "event_msg",
+            payload = new { type = "item_completed", turn_id = turn, item = new { type }, started_at_ms = startedMs, completed_at_ms = completedMs } });
         void Append(string path, string text) => File.AppendAllText(path, text + (char)10, utf8);
         try
         {
@@ -125,6 +127,51 @@ internal static class SyntheticSelfTests
             Append(idlessPath, Complete("turn-idless", 4_000, 1_000));
             speed = monitor.Poll(true)!;
             Check("response_id-less completion applies the generation window", Math.Abs(speed.OutputSpeed!.Value - 30.0) < 0.001);
+            var averagePresentation = OverlayPresentationBuilder.Create(speed, DisplayField.Total, DisplayField.Speed,
+                DisplayField.Total | DisplayField.Speed);
+            Check("fallback speed keeps the average label", !speed.SpeedGenerationOnly && speed.GenerationSeconds is null &&
+                averagePresentation.Secondary.Value == "30 tok/s" && averagePresentation.Secondary.ExpandedLabel == "输出速度（本轮平均）");
+            var generationPath = Path.Combine(directory, "sessions", "speedgen.jsonl");
+            File.WriteAllText(generationPath, Meta("speedgen") + (char)10, utf8);
+            Append(generationPath, Started("turn-gen", "2026-10-02T11:00:00Z"));
+            Append(generationPath, Item("turn-gen", "Reasoning", 0, 2_000));
+            Append(generationPath, Item("turn-gen", "AgentMessage", 2_000, 5_000));
+            Append(generationPath, Item("turn-gen", "CommandExecution", 5_000, 65_000));
+            Append(generationPath, Record("turn-gen", "2026-10-02T11:01:10Z", "resp-g1", 1_000, 0, 100, 500));
+            monitor.PreferredThreadId = "speedgen";
+            var generation = monitor.Poll(true)!;
+            Check("generation-only speed uses item seconds", Math.Abs(generation.OutputSpeed!.Value - 100) < 0.001 && generation.SpeedGenerationOnly);
+            Check("generation and tool seconds reported", Math.Abs(generation.GenerationSeconds!.Value - 5) < 0.001 &&
+                Math.Abs(generation.ToolSeconds!.Value - 60) < 0.001);
+            var generationPresentation = OverlayPresentationBuilder.Create(generation, DisplayField.Total, DisplayField.Speed,
+                DisplayField.Total | DisplayField.Speed);
+            Check("generation-only speed shows the pure label", generationPresentation.Secondary.Value == "100 tok/s" &&
+                generationPresentation.Secondary.ExpandedLabel == "输出速度（纯生成）");
+            Append(generationPath, Item("turn-gen", "FileChange", 65_000, 70_000));
+            generation = monitor.Poll(true)!;
+            Check("later tool item leaves generation speed unchanged", Math.Abs(generation.OutputSpeed!.Value - 100) < 0.001 &&
+                Math.Abs(generation.ToolSeconds!.Value - 65) < 0.001);
+            Append(generationPath, Item("turn-gen", "Reasoning", 100_000, 100_000));
+            Append(generationPath, Item("turn-gen", "Reasoning", 100_000, 3_700_001));
+            Append(generationPath, Item("turn-other", "Reasoning", 100_000, 109_000));
+            Append(generationPath, Item("turn-gen", "UserMessage", 100_000, 104_000));
+            generation = monitor.Poll(true)!;
+            Check("zero, oversized, foreign and unknown items ignored", Math.Abs(generation.GenerationSeconds!.Value - 5) < 0.001 &&
+                Math.Abs(generation.ToolSeconds!.Value - 65) < 0.001 && Math.Abs(generation.OutputSpeed!.Value - 100) < 0.001);
+            Append(generationPath, Started("turn-gen2", "2026-10-02T11:03:00Z"));
+            generation = monitor.Poll(true)!;
+            Check("new turn resets item accumulators", generation.GenerationSeconds is null && generation.ToolSeconds is null &&
+                generation.OutputSpeed is null && !generation.SpeedGenerationOnly);
+            Append(generationPath, Item("turn-gen2", "Reasoning", 0, 4_000));
+            generation = monitor.Poll(true)!;
+            Check("items without a usage record keep speed empty", generation.OutputSpeed is null && generation.GenerationSeconds is > 0);
+            Append(generationPath, Record("turn-gen2", "2026-10-02T11:03:10Z", "resp-g2", 1_000, 0, 60, 300));
+            generation = monitor.Poll(true)!;
+            Check("record after items uses generation seconds", Math.Abs(generation.OutputSpeed!.Value - 75) < 0.001 && generation.SpeedGenerationOnly);
+            Append(generationPath, JsonSerializer.Serialize(new { timestamp = "2026-10-02T11:03:11Z", type = "event_msg", payload = new { type = "turn_aborted", turn_id = "turn-gen2" } }));
+            generation = monitor.Poll(true)!;
+            Check("aborted turn retains generation accumulation", Math.Abs(generation.OutputSpeed!.Value - 75) < 0.001 &&
+                Math.Abs(generation.GenerationSeconds!.Value - 4) < 0.001);
             monitor.PreferredThreadId = "a";
             var presentation = OverlayPresentationBuilder.Create(s, DisplayField.Total, DisplayField.CacheHitRate, OverlaySettings.CreateDefault().VisibleFields);
             Check("exact expanded total", presentation.Total!.Value == "4,956,088 tok");
