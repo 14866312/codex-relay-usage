@@ -20,7 +20,14 @@ internal static class CostUiTests
             using var editorHost = ShowOffscreen(editor);
             Check("new model rates start blank", editor.TryBuildSettings(out var blank, out _) && blank.ForModel("relay/test")!.Low == new TokenPrices());
             Check("default tier threshold 272000 editable", Find<TextBox>(editor, "Threshold").Text == "272000");
-            Check("price editor low input field has usable bounds", Find<TextBox>(editor, "Low0").Width >= 100 && Find<TextBox>(editor, "Low0").Height >= 20);
+            // A single-line TextBox is a native edit control: its height follows the font
+            // and stays at 16 px at 96 DPI no matter how tall its container is. The visible
+            // input surface is the FieldFrame, so measure that for "usable bounds" instead
+            // of asserting a height the native edit never reports on a 100% display.
+            var lowInput = Find<TextBox>(editor, "Low0");
+            var lowSurface = lowInput.Parent;
+            Check("price editor low input field has usable bounds",
+                lowInput.Width >= 100 && lowSurface is { Height: >= 20 });
             var originalBounds = editor.Bounds; var originalMinimum = editor.MinimumSize;
             var laptop = new Rectangle(-1024, 0, 1024, 700);
             editor.FitToWorkingArea(laptop); editor.PerformLayout();
