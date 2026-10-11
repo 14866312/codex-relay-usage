@@ -64,6 +64,14 @@ $liveUiPath = Join-Path $outputRoot "live-ui.json"
 Invoke-Probe -Arguments @("--live-ui-probe", $liveUiPath)
 $liveUi = Get-Content -LiteralPath $liveUiPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($liveUi.Failed -ne 0) { throw "实时更新及窗口跟随检查失败，请查看 $liveUiPath" }
+# Deliberately silent catch sites report here. A non-empty map is not a failure by
+# itself, but the entry point must stay runnable and parseable so a real watcher
+# problem is observable instead of invisible.
+$ignoredPath = Join-Path $outputRoot "ignored-exceptions.json"
+Invoke-Probe -Arguments @("--ignored-exceptions", $ignoredPath)
+$ignored = Get-Content -LiteralPath $ignoredPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($null -eq $ignored) { throw "被忽略异常诊断入口未输出可解析快照，请查看 $ignoredPath" }
+$ignoredSites = @($ignored.PSObject.Properties).Count
 $notificationMethod = 'Show' + 'BalloonTip'
 $notificationCalls = @(Get-ChildItem -LiteralPath (Join-Path $repositoryRoot "src/CodexTokenOverlay") -Filter "*.cs" |
     Select-String -SimpleMatch $notificationMethod)
@@ -116,6 +124,7 @@ $summary = [pscustomobject]@{
     ClipboardFailed = $clipboard.Failed
     NotificationUiPassed = 1
     NotificationUiFailed = 0
+    IgnoredExceptionSites = $ignoredSites
     LiveUiPassed = $liveUi.Passed
     LiveUiFailed = $liveUi.Failed
     LogAppendToPublication = $liveUi.LogAppendToPublication

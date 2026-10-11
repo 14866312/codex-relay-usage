@@ -182,6 +182,7 @@ internal static class SyntheticSelfTests
             var saved = Path.Combine(directory, "settings.json"); settings.Save(saved); var loaded = OverlaySettings.Load(saved);
             Check("settings persistence", loaded.PinnedThreadId == "b" && loaded.SessionRoot == directory && loaded.CollapsedSecondaryField == DisplayField.CacheHitRate);
             Check("corrupt settings recover", OverlaySettings.ParseJson("bad-json").Settings.CollapsedPrimaryField == DisplayField.Total);
+            ClipboardRetryTests.Run(Check);
             TitleBarPlacementTests.Run(Check, directory);
             ConversationSwitchTests.Run(Check, directory);
             SidebarIdentificationTests.Run(Check, directory);

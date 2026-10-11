@@ -5,17 +5,25 @@ internal static class ClipboardUiTests
     internal const int MaxAttempts = 3;
 
     internal static DiagnosticsRunner.SelfTestResult Run()
+        => RunWithRetry(RunAttempt, MaxAttempts);
+
+    // The retry loop is separated from the scenario so a synthetic test can drive
+    // it deterministically: a single-flake attempt must still report clean, and a
+    // persistently failing attempt must be reported as failed rather than retried
+    // forever or swallowed.
+    internal static DiagnosticsRunner.SelfTestResult RunWithRetry(
+        Func<int, DiagnosticsRunner.SelfTestResult> attempt, int maxAttempts)
     {
         DiagnosticsRunner.SelfTestResult result = new(0, 0, []);
-        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+        for (var number = 1; number <= maxAttempts; number++)
         {
-            result = RunAttempt(attempt);
+            result = attempt(number);
             // The clipboard is a global resource: a clipboard manager or another
             // foreground process can legitimately race this synthetic probe. A
             // deterministic regression fails every attempt, so only retry when
             // the previous attempt was not clean.
             if (result.Failed == 0) return result;
-            if (attempt < MaxAttempts) Thread.Sleep(150);
+            if (number < maxAttempts) Thread.Sleep(150);
         }
         return result;
     }

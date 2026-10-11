@@ -28,3 +28,38 @@ jobs:
           if ($result.Failed -ne 0) { throw "self-test failures: $($result.Failed)" }
           Write-Host "passed=$($result.Passed) failed=$($result.Failed)"
           Remove-Item $tmp -Force
+
+      # These four probes build their own windows and need neither Codex nor a real
+      # session. They cover the cost window, toolbar interaction, live log-to-panel
+      # flow, and clipboard restoration, so regressions surface on pull requests
+      # instead of only during a local Verify.ps1 run.
+      - name: Run UI probes
+        shell: powershell
+        run: |
+          $exe = './src/CodexTokenOverlay/bin/Release/net10.0-windows/CodexRelayUsage.exe'
+          foreach ($mode in @('cost-ui-probe', 'feedback-ui-probe', 'live-ui-probe', 'clipboard-ui-probe')) {
+            $tmp = Join-Path $env:TEMP ($mode + '-' + [guid]::NewGuid().ToString('N') + '.json')
+            $p = Start-Process -FilePath $exe -ArgumentList @('--' + $mode, $tmp) -PassThru -WindowStyle Hidden
+            $p.WaitForExit(180000) | Out-Null
+            if (-not (Test-Path $tmp)) { throw ($mode + ' produced no result file, exit ' + $p.ExitCode) }
+            $result = Get-Content $tmp -Raw | ConvertFrom-Json
+            if ($p.ExitCode -ne 0 -or $result.Failed -ne 0) {
+              $names = @($result.Results | Where-Object { -not $_.Passed } | ForEach-Object { $_.Name + ' :: ' + $_.Error })
+              throw ($mode + ' exit=' + $p.ExitCode + ' failed=' + $result.Failed + ' -> ' + ($names -join '; '))
+            }
+            Write-Host ($mode + ' passed=' + $result.Passed)
+            Remove-Item $tmp -Force
+          }
+
+      - name: Check the ignored-exception diagnostics entry point
+        shell: powershell
+        run: |
+          $exe = './src/CodexTokenOverlay/bin/Release/net10.0-windows/CodexRelayUsage.exe'
+          $tmp = Join-Path $env:TEMP ('ignored-' + [guid]::NewGuid().ToString('N') + '.json')
+          $p = Start-Process -FilePath $exe -ArgumentList @('--ignored-exceptions', $tmp) -PassThru -WindowStyle Hidden
+          $p.WaitForExit(60000) | Out-Null
+          if ($p.ExitCode -ne 0) { throw ('ignored-exceptions exit code ' + $p.ExitCode) }
+          $snapshot = Get-Content $tmp -Raw | ConvertFrom-Json
+          if ($null -eq $snapshot) { throw 'ignored-exceptions wrote no parseable snapshot' }
+          Write-Host ('ignored-exception map parsed, entries: ' + @($snapshot.PSObject.Properties).Count)
+          Remove-Item $tmp -Force
