@@ -35,7 +35,7 @@ internal sealed class ModernButton : Button, IThemedControl
         var scale = DeviceDpi / 96f; var r = new RectangleF(1, 1, Width - 3, Height - 3);
         var fill = Kind == ButtonKind.Primary ? _palette.Primary : Kind == ButtonKind.Ghost ? _palette.Background : _palette.InputSurface;
         if (_hover) fill = Kind == ButtonKind.Primary ? _palette.PrimaryHover : _palette.ToolbarHover;
-        if (_pressed && (_hover || !Capture)) fill = Kind == ButtonKind.Primary ? _palette.PrimaryPressed : _palette.ToolbarPressed;
+        if (_pressed && (_hover || !Capture)) fill = Kind == ButtonKind.Primary ? OverlayThemePalette.PrimaryPressed : _palette.ToolbarPressed;
         if (!Enabled) fill = _palette.ProgressTrack;
         var text = !Enabled ? _palette.Label : Kind == ButtonKind.Primary ? Color.White : Kind == ButtonKind.Danger ? _palette.Danger : _palette.Value;
         using var p = UiDrawing.Round(r, 7 * scale); using var b = new SolidBrush(fill); g.FillPath(b, p);
@@ -142,8 +142,8 @@ internal class ModernDialog : Form
         Palette = palette; ThemeControls(this, palette); _title.ForeColor = palette.Accent; Invalidate();
         if (IsHandleCreated && TopLevel)
         {
-            var dark = palette.IsLight ? 0 : 1; DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
-            var corner = 2; DwmSetWindowAttribute(Handle, 33, ref corner, sizeof(int));
+            var dark = palette.IsLight ? 0 : 1; _ = DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
+            var corner = 2; _ = DwmSetWindowAttribute(Handle, 33, ref corner, sizeof(int));
         }
     }
     internal static void ThemeControls(Control root, OverlayThemePalette palette)

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace CodexTokenOverlay;
 
 internal sealed class SessionPickerForm : ModernDialog
@@ -43,7 +45,7 @@ internal sealed class SessionPickerForm : ModernDialog
             var search = $"{session.Title} {session.ThreadId} {session.Cwd}";
             if (!search.Contains(_filter.Text.Trim(), StringComparison.OrdinalIgnoreCase)) continue;
             var item = new ListViewItem(session.Title is null ? session.ThreadId : session.Title + " · " + session.ThreadId) { Tag = session.ThreadId };
-            item.SubItems.Add(session.WriteUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
+            item.SubItems.Add(session.WriteUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture));
             item.SubItems.Add(session.Cwd ?? "未提供"); _list.Items.Add(item);
         }
         _list.EndUpdate();

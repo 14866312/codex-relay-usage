@@ -21,7 +21,7 @@ internal static class OverlayPresentationBuilder
     {
         var context = snapshot.ContextPercent;
         var rounds = snapshot.TurnCount.HasValue ? snapshot.TurnCount + " 轮" : "— 轮";
-        var time = snapshot.UpdatedAtUtc == default ? "未提供时间" : snapshot.UpdatedAtUtc.ToLocalTime().ToString("HH:mm:ss");
+        var time = snapshot.UpdatedAtUtc == default ? "未提供时间" : snapshot.UpdatedAtUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
         var rows = Rows(visibleFields, field => Metric(snapshot, field, false, cost)).ToList();
         if (cost is not null && visibleFields.HasFlag(DisplayField.Cost))
         {
@@ -41,7 +41,7 @@ internal static class OverlayPresentationBuilder
             EstimateText: cost is null ? null : "按当前配置估算（USD） · 已计价 " + cost.PricedCalls + "/" + cost.RecordedCalls + " 次"
                 + (cost.Status == SessionCostStatus.Partial ? " · 部分记录" : ""));
     }
-    private static IReadOnlyList<OverlayMetric> Rows(DisplayField fields, Func<DisplayField, OverlayMetric> metric) =>
+    private static OverlayMetric[] Rows(DisplayField fields, Func<DisplayField, OverlayMetric> metric) =>
         DisplayFieldRules.Ordered.Where(f => f != DisplayField.Total && (fields & f) != 0).Select(metric).ToArray();
     private static OverlayMetric WaitingMetric(DisplayField field)
     { var labels = Labels(field); return new(field, labels.Compact, labels.Full, "— / 未提供", false); }
@@ -65,7 +65,7 @@ internal static class OverlayPresentationBuilder
             DisplayField.Thread => ShortThreadId(s.ThreadId),
             DisplayField.Cost => CostFormatting.Summary(cost, compact),
             DisplayField.Speed => s.OutputSpeed is { } speed && speed > 0
-                ? speed.ToString(speed >= 100 ? "0" : speed >= 10 ? "0.#" : "0.##", Invariant) + " tok/s" : "— / 未提供",
+                ? speed.ToString("0.#", Invariant) + " tok/s" : "— / 未提供",
             _ => "—"
         };
         var hasValue = field switch
@@ -142,7 +142,7 @@ internal static class PresentationProbe
             var presentation = probeCase.Operation switch
             {
                 "Create" => OverlayPresentationBuilder.Create(
-                    probeCase.Snapshot ?? throw new ArgumentException("Create 操作需要 Snapshot。", nameof(probeCase)),
+                    probeCase.Snapshot ?? throw new ArgumentException("Create 操作需要 Snapshot。", nameof(request)),
                     primaryField,
                     secondaryField,
                     visibleFields),
@@ -151,7 +151,7 @@ internal static class PresentationProbe
                     primaryField,
                     secondaryField,
                     visibleFields),
-                _ => throw new ArgumentException($"不支持的展示探针操作：{probeCase.Operation}", nameof(probeCase))
+                _ => throw new ArgumentException($"不支持的展示探针操作：{probeCase.Operation}", nameof(request))
             };
             results.Add(new PresentationProbeCaseResult(probeCase.Name, presentation));
         }

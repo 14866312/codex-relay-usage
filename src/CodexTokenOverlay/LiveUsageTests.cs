@@ -37,7 +37,7 @@ internal static class LiveUsageTests
         check("first call advances tokens before task completion or legacy snapshot", first.TotalTokens == 110 && first.TurnInProgress && first.UsageSource == "逐次线程累计");
         check("latest call supplies context estimate immediately", first.ContextUsedTokens == 110 && first.ContextWindowTokens is null);
         p = OverlayPresentationBuilder.Create(first, DisplayField.Total, DisplayField.CacheHitRate, DisplayField.Total);
-        check("running indicator retains numeric metrics", p.StatusText is null && p.Primary.Value == "110" && p.ExtraText!.StartsWith("进行中"));
+        check("running indicator retains numeric metrics", p.StatusText is null && p.Primary.Value == "110" && p.ExtraText!.StartsWith("进行中", StringComparison.Ordinal));
         Append(Record("two", U(150), U(250, 20, 80)));
         var second = reader.Read()!;
         check("second call in same running turn immediately accumulates", second.TotalTokens == 270 && second.TurnCount == 1 && second.OutputTokens == 20);
@@ -123,7 +123,7 @@ internal static class LiveUsageTests
             afterRewrite.TotalTokens == 210 && !ReferenceEquals(beforeRewrite, afterRewrite));
         Append(Legacy(U(300)));
         using var cancelled = new CancellationTokenSource();
-        try { reader.Read(cancelled.Token, cancelled.Cancel); } catch (OperationCanceledException) { }
+        try { reader.Read(cancelled.Cancel, cancelled.Token); } catch (OperationCanceledException) { }
         check("cancelled EOF read cannot return a previously cached snapshot",
             reader.ReadOffset == new FileInfo(path).Length && reader.Read()!.TotalTokens == 310);
     }

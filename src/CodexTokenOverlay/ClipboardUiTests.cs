@@ -3,6 +3,7 @@ namespace CodexTokenOverlay;
 internal static class ClipboardUiTests
 {
     internal const int MaxAttempts = 3;
+    private static readonly string[] SyntheticFiles = [@"C:\synthetic\file.txt"];
 
     internal static DiagnosticsRunner.SelfTestResult Run()
         => RunWithRetry(RunAttempt, MaxAttempts);
@@ -44,7 +45,7 @@ internal static class ClipboardUiTests
             fixture.SetData(DataFormats.UnicodeText, false, "original fixture text");
             fixture.SetData(DataFormats.Html, false, "<b>original fixture</b>");
             fixture.SetData(DataFormats.Rtf, false, @"{\rtf1 original fixture}");
-            fixture.SetData(DataFormats.FileDrop, false, new[] { @"C:\synthetic\file.txt" });
+            fixture.SetData(DataFormats.FileDrop, false, SyntheticFiles);
             using var binary = new MemoryStream(new byte[] { 0, 1, 2, 127, 255 });
             fixture.SetData("CodexUsage-TestBinary", false, binary);
             Clipboard.SetDataObject(fixture, true); ours = CurrentConversationLink.GetClipboardSequenceNumber();

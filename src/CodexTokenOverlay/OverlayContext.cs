@@ -233,7 +233,7 @@ internal sealed class OverlayContext : ApplicationContext
         _timer.Start();
     }
 
-    private void StartStartupSettings(string mode)
+    private static void StartStartupSettings(string mode)
     {
         try
         {

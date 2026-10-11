@@ -4,6 +4,8 @@ namespace CodexTokenOverlay;
 
 internal static class CostUiTests
 {
+    private static readonly string[] RelayTestModels = ["relay/test"];
+
     internal static DiagnosticsRunner.SelfTestResult Run(string? previewDirectory = null)
     {
         var results = new List<DiagnosticsRunner.TestResult>();
@@ -14,7 +16,7 @@ internal static class CostUiTests
         try
         {
             var pricePath = Path.Combine(directory, "prices.json");
-            using var editor = new ModelPriceForm(PricingSettings.Empty, new[] { "relay/test" }, pricePath);
+            using var editor = new ModelPriceForm(PricingSettings.Empty, RelayTestModels, pricePath);
             using var editorHost = ShowOffscreen(editor);
             Check("new model rates start blank", editor.TryBuildSettings(out var blank, out _) && blank.ForModel("relay/test")!.Low == new TokenPrices());
             Check("default tier threshold 272000 editable", Find<TextBox>(editor, "Threshold").Text == "272000");
@@ -136,7 +138,7 @@ internal static class CostUiTests
     {
         protected override bool ShowWithoutActivation => true;
     }
-    private static Form ShowOffscreen(Form form)
+    private static OffscreenHost ShowOffscreen(Form form)
     {
         var host = new OffscreenHost { StartPosition = FormStartPosition.Manual, Location = new(-32_000, -32_000),
             ShowInTaskbar = false, ClientSize = form.Size };

@@ -71,7 +71,7 @@ internal static class LiveUiTests
             DisplayField.Total, DisplayField.CacheHitRate, OverlaySettings.CreateDefault().VisibleFields);
         strip.SetPresentation(presentation);
         host.Show(); unrelated.Show(); Application.DoEvents();
-        var handle = host.Handle; GetWindowThreadProcessId(handle, out var processId);
+        var handle = host.Handle; _ = GetWindowThreadProcessId(handle, out var processId);
         var workArea = IntRect.FromRectangle(Screen.FromHandle(handle).WorkingArea);
         var target = new CodexWindowTarget(new(handle, IntRect.FromRectangle(host.Bounds), IntRect.FromRectangle(host.Bounds),
             null, workArea, (uint)host.DeviceDpi, new(46, 30, 8, 8, 4)));

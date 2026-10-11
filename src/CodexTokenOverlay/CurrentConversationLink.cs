@@ -9,6 +9,8 @@ internal sealed record CopiedConversationLink(string? Link, string? Error, bool 
 // the visible conversation from background subscriptions or the newest log.
 internal static class CurrentConversationLink
 {
+    private static readonly int[] ModifierKeys = [0x10, 0x11, 0x12, 0x5B, 0x5C];
+
     internal static string? ThreadId(string? text)
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length > 512 ||
@@ -23,7 +25,7 @@ internal static class CurrentConversationLink
     {
         if (!TryGetForegroundHost(view, out var host, out var processId))
             return new(null, "请回到要识别的 Codex 对话后重试");
-        if (new[] { 0x10, 0x11, 0x12, 0x5B, 0x5C }.Any(key => (GetAsyncKeyState(key) & 0x8000) != 0))
+        if (ModifierKeys.Any(key => (GetAsyncKeyState(key) & 0x8000) != 0))
             return new(null, "请松开键盘修饰键后再点击识别");
         ClipboardSnapshot? snapshot = null;
         uint copiedSequence = 0;
@@ -98,7 +100,7 @@ internal static class CurrentConversationLink
         if (!IsForegroundHost(host)) return false;
         var windows = CodexWindowLocator.GetVisibleMainWindows();
         if (windows.Count != 1 || windows[0].Handle != host) return false;
-        GetWindowThreadProcessId(host, out processId);
+        _ = GetWindowThreadProcessId(host, out processId);
         return processId != 0;
     }
     private static bool IsForegroundHost(IntPtr host) => GetAncestor(GetForegroundWindow(), 2) == host;
@@ -114,7 +116,7 @@ internal static class CurrentConversationLink
         if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) == inputs.Length) return true;
         // A partial injection must not leave Ctrl/Alt pressed.
         var release = new[] { Key(0x4C, true), Key(0x12, true), Key(0x11, true) };
-        SendInput((uint)release.Length, release, Marshal.SizeOf<Input>());
+        _ = SendInput((uint)release.Length, release, Marshal.SizeOf<Input>());
         return false;
     }
     [StructLayout(LayoutKind.Sequential)] private struct Input { public uint Type; public InputData Data; }

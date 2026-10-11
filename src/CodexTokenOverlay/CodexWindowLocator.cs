@@ -120,7 +120,7 @@ internal static class CodexWindowLocator
             return false;
         }
 
-        GetWindowThreadProcessId(windowHandle, out var processId);
+        _ = GetWindowThreadProcessId(windowHandle, out var processId);
         if (processId == 0)
         {
             return false;
@@ -153,7 +153,7 @@ internal static class CodexWindowLocator
             return false;
         }
 
-        GetWindowThreadProcessId(previousHost, out var currentProcessId);
+        _ = GetWindowThreadProcessId(previousHost, out var currentProcessId);
         if (!IsKnownTargetIdentityValid(
                 confirmed.HostHandle,
                 confirmed.ProcessId,
@@ -191,7 +191,7 @@ internal static class CodexWindowLocator
         if (!ConfirmedTargets.TryGetValue(previous, out var identity) || !IsWindow(handle)
             || !IsWindowVisible(handle) || IsIconic(handle)
             || (requireForeground && GetAncestor(GetForegroundWindow(), GaRoot) != handle)) return false;
-        GetWindowThreadProcessId(handle, out var processId);
+        _ = GetWindowThreadProcessId(handle, out var processId);
         if (!IsKnownTargetIdentityValid(identity.HostHandle, identity.ProcessId, handle.ToInt64(), processId)
             || !GetWindowRect(handle, out var nativeBounds)) return false;
         var bounds = ToIntRect(nativeBounds);
@@ -275,7 +275,7 @@ internal static class CodexWindowLocator
             return false;
         }
 
-        GetWindowThreadProcessId(hostHandle, out var currentHostProcessId);
+        _ = GetWindowThreadProcessId(hostHandle, out var currentHostProcessId);
         if (!IsKnownTargetIdentityValid(
             confirmed.HostHandle,
             confirmed.ProcessId,
@@ -306,7 +306,7 @@ internal static class CodexWindowLocator
             return false;
         }
 
-        GetWindowThreadProcessId(selectedRoot, out var selectedProcessId);
+        _ = GetWindowThreadProcessId(selectedRoot, out var selectedProcessId);
         return IsKnownTargetIdentityValid(
             confirmed.HostHandle,
             confirmed.ProcessId,
@@ -442,9 +442,9 @@ internal static class CodexWindowLocator
             };
         }
 
-        GetWindowThreadProcessId(windowHandle, out var processId);
+        _ = GetWindowThreadProcessId(windowHandle, out var processId);
         var title = new StringBuilder(1024);
-        GetWindowText(windowHandle, title, title.Capacity);
+        _ = GetWindowText(windowHandle, title, title.Capacity);
         var isCodex = processId != 0 && IsCodexDesktopProcess(processId);
         CodexWindowTarget? target = null;
         if (isCodex && TryGetCodexTarget(windowHandle, processId, out var readTarget))
@@ -497,9 +497,9 @@ internal static class CodexWindowLocator
         out IReadOnlyList<WindowSurfaceCandidate> candidates)
     {
         var collected = new List<WindowSurfaceCandidate>();
-        var enumerationSucceeded = EnumWindows((windowHandle, _) =>
+        var enumerationSucceeded = EnumWindows((windowHandle, windowParameter) =>
         {
-            GetWindowThreadProcessId(windowHandle, out var processId);
+            _ = GetWindowThreadProcessId(windowHandle, out var processId);
             var isVisible = IsWindowVisible(windowHandle);
             var isMinimized = IsIconic(windowHandle);
             if (!GetWindowRect(windowHandle, out var nativeBounds))
@@ -529,10 +529,10 @@ internal static class CodexWindowLocator
     {
         var windows = new List<WindowCandidateFacts>();
         var confirmedProcesses = new Dictionary<uint, bool>();
-        EnumWindows((handle, _) =>
+        EnumWindows((handle, windowParameter) =>
         {
             if (!IsWindowVisible(handle) || IsIconic(handle)) return true;
-            GetWindowThreadProcessId(handle, out var processId);
+            _ = GetWindowThreadProcessId(handle, out var processId);
             if (!confirmedProcesses.TryGetValue(processId, out var confirmed))
                 confirmedProcesses[processId] = confirmed = IsCodexDesktopProcess(processId);
             if (confirmed && TryReadCandidate(handle, processId, out var candidate) && CodexWindowClassifier.IsHost(candidate))
@@ -547,9 +547,9 @@ internal static class CodexWindowLocator
         out IReadOnlyList<WindowCandidateFacts> candidates)
     {
         var collected = new List<WindowCandidateFacts>();
-        var enumerationSucceeded = EnumWindows((windowHandle, _) =>
+        var enumerationSucceeded = EnumWindows((windowHandle, windowParameter) =>
         {
-            GetWindowThreadProcessId(windowHandle, out var candidateProcessId);
+            _ = GetWindowThreadProcessId(windowHandle, out var candidateProcessId);
             if (candidateProcessId != expectedProcessId)
             {
                 return true;

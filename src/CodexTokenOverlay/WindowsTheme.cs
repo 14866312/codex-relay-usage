@@ -58,7 +58,7 @@ internal sealed record OverlayThemePalette(
     public Color InputSurface => IsLight ? Color.FromArgb(246, 248, 252) : Color.FromArgb(27, 29, 34);
     public Color Primary => IsLight ? Color.FromArgb(112, 96, 232) : Color.FromArgb(125, 107, 240);
     public Color PrimaryHover => IsLight ? Color.FromArgb(96, 79, 217) : Color.FromArgb(146, 128, 255);
-    public Color PrimaryPressed => Color.FromArgb(83, 64, 196);
+    public static Color PrimaryPressed => Color.FromArgb(83, 64, 196);
     public Color Danger => IsLight ? Color.FromArgb(212, 66, 80) : Color.FromArgb(255, 127, 138);
     public Color Warning => IsLight ? Color.FromArgb(180, 116, 24) : Color.FromArgb(238, 186, 88);
     public Color Success => IsLight ? Color.FromArgb(37, 161, 110) : Color.FromArgb(99, 210, 160);

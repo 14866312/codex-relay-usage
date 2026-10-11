@@ -42,7 +42,9 @@ internal static class IdentificationPipelineTests
             using var started = new ManualResetEventSlim(); using var release = new ManualResetEventSlim(); using var ended = new ManualResetEventSlim();
             using var monitor = new CodexVisibleThreadMonitor(root, () => Volatile.Read(ref current), (view, token) =>
             {
-                started.Set(); release.Wait(TimeSpan.FromSeconds(2));
+                // The late-result fixtures must finish even when the monitor cancels, so the
+                // wait intentionally does not observe the token; the callback returns afterwards.
+                started.Set(); release.Wait(TimeSpan.FromSeconds(2), CancellationToken.None);
                 ended.Set(); // Deliberately return a late result despite cancellation.
                 return new("codex://threads/" + a, null);
             }, identifyTimeout: TimeSpan.FromMilliseconds(150));

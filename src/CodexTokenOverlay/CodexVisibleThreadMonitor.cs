@@ -57,7 +57,7 @@ internal static class CodexViewIdentityReader
             var document = documents[0];
             var title = document.Node.get_accName(0);
             using var metadata = new AccessibleMetadata(document.Node);
-            GetWindowThreadProcessId(handle, out var pid);
+            _ = GetWindowThreadProcessId(handle, out var pid);
             long lifetime;
             using (var process = Process.GetProcessById((int)pid)) lifetime = process.StartTime.ToUniversalTime().Ticks;
             var owner = metadata.UniqueId() is { } id ? $"{handle.ToInt64()}/{pid}/{lifetime}/{id}" : null;

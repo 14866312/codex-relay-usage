@@ -6,6 +6,7 @@ namespace CodexTokenOverlay;
 internal static class SessionCostTests
 {
     internal static readonly UsageAmounts SampleUsage = new(97_125, 3_610, 0, 478, 100, 97_603);
+    private static readonly string[] AliasModels = ["relay/test", "relay/alias"];
     internal static ModelPriceProfile Profile(string model = "relay/test", TokenPrices? low = null) =>
         new("sample", "示例价格", new[] { model }, PriceEntryMode.BaseWithMultiplier, .35m, false, 272_000,
             low ?? new(2m, .1m, .2m, 10m), new(4m, .2m, .4m, 15m));
@@ -190,14 +191,14 @@ internal static class SessionCostTests
         check("log truncation replaces ledger and clears fee", snapshot.Ledger!.LedgerId != oldId && calculator.Calculate(snapshot.Ledger, prices).Status == SessionCostStatus.Waiting);
         File.WriteAllText(path, start + string.Concat(Enumerable.Repeat(sample, 250)), encoding);
         var reader = new IncrementalSessionReader(path, "test"); using var cancellation = new CancellationTokenSource(); var didCancel = false;
-        try { reader.Read(cancellation.Token, () => cancellation.Cancel()); } catch (OperationCanceledException) { didCancel = true; }
+        try { reader.Read(() => cancellation.Cancel(), cancellation.Token); } catch (OperationCanceledException) { didCancel = true; }
         var resumed = reader.Read();
         check("canceled incremental read resumes with dedup intact", didCancel && resumed!.Ledger!.Calls.Count == 1 &&
             calculator.Calculate(resumed.Ledger, prices).Amounts?.Total == .06725985m);
     }
     private static void ConfigurationTests(Action<string, bool> check, string directory)
     {
-        var prices = Prices(Profile() with { Models = new[] { "relay/test", "relay/alias" }, Low = new(0m, .1m, null, 10m) }).Settings;
+        var prices = Prices(Profile() with { Models = AliasModels, Low = new(0m, .1m, null, 10m) }).Settings;
         var path = Path.Combine(directory, "prices.json");
         check("missing price config starts blank", PricingStore.Load(path).Settings.Profiles.Count == 0);
         check("price configuration atomic save", PricingStore.TrySave(prices, out _, path));

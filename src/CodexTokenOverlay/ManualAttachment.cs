@@ -179,10 +179,7 @@ internal static class ManualAttachmentCalculator
     private static void ValidateTargetAndDpi(IntRect target, uint dpi)
     {
         ValidateTarget(target);
-        if (dpi == 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(dpi));
-        }
+        ArgumentOutOfRangeException.ThrowIfZero(dpi);
     }
 
     private static void ValidateTarget(IntRect target)

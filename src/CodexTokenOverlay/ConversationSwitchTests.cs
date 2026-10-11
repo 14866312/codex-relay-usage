@@ -136,7 +136,7 @@ internal static class ConversationSwitchTests
         var reader = new IncrementalSessionReader(cancelPath, "cancel");
         using var cancellation = new CancellationTokenSource();
         var cancelled = false;
-        try { reader.Read(cancellation.Token, () => cancellation.Cancel()); }
+        try { reader.Read(() => cancellation.Cancel(), cancellation.Token); }
         catch (OperationCanceledException) { cancelled = true; }
         check("large read cancellation stops after a complete byte block", cancelled && reader.ReadOffset == 65_536 && reader.TotalBytesRead == 65_536);
         var resumed = reader.Read();
@@ -156,7 +156,7 @@ internal static class ConversationSwitchTests
         var eofPath = Path.Combine(sessions, "cancel-eof.jsonl"); File.WriteAllText(eofPath, Meta("cancel-eof") + Usage(300), utf8);
         var eofReader = new IncrementalSessionReader(eofPath, "cancel-eof");
         using var eofCancellation = new CancellationTokenSource();
-        try { eofReader.Read(eofCancellation.Token, () => eofCancellation.Cancel()); } catch (OperationCanceledException) { }
+        try { eofReader.Read(() => eofCancellation.Cancel(), eofCancellation.Token); } catch (OperationCanceledException) { }
         var eofBytes = eofReader.TotalBytesRead;
         check("cancellation at EOF preserves fingerprint and latest parsed usage", eofReader.Read()!.TotalTokens == 305 && eofReader.TotalBytesRead == eofBytes);
         using var alreadyCancelled = new CancellationTokenSource(); alreadyCancelled.Cancel(); cancelled = false;

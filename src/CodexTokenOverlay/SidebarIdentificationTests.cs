@@ -6,6 +6,8 @@ internal static class SidebarIdentificationTests
 {
     private const string Home = @"C:\synthetic\codex";
     private const string Title = "相同的完整会话标题";
+    // A JSON array is the "not an object" shape JsonSerializer rejects as a global state fixture.
+    private static readonly JsonElement NonObjectState = JsonSerializer.SerializeToElement(new[] { 1 });
     private static object Assignment(string project, string kind = "local") => new { projectKind = kind, projectId = project };
     private static Dictionary<string, object> Assignments() => new()
     { ["a"] = Assignment("p1"), ["b"] = Assignment("server-two"), ["remote"] = Assignment("p1"), ["cloud"] = Assignment("p1", "chatgpt") };
@@ -86,7 +88,7 @@ internal static class SidebarIdentificationTests
         check("a third conflicting alias cannot resurrect an ambiguous project ID", projects.ProjectKey("collision-thread") is null);
         projects.Load(State(mappingHome: Home + "-other"), Home);
         check("project aliases from another home are excluded", projects.ProjectKey("b") is null && projects.ProjectKey("a") == "p1");
-        projects.Load(JsonSerializer.SerializeToElement(new[] { 1 }), Home);
+        projects.Load(JsonSerializer.SerializeToElement(NonObjectState), Home);
         check("non-object global state clears project mappings", projects.UniqueProject("项目一") is null);
         var home = Path.Combine(directory, "project-index"); Directory.CreateDirectory(Path.Combine(home, "sessions"));
         var path = Path.Combine(home, ".codex-global-state.json"); projects.SetRoot(home); projects.Refresh();

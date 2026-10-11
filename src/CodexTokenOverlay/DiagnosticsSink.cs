@@ -13,6 +13,7 @@ namespace CodexTokenOverlay;
 internal static class DiagnosticsSink
 {
     private static readonly ConcurrentDictionary<string, int> Counts = new(StringComparer.Ordinal);
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     public static void Record(string site, Exception? error = null)
     {
@@ -25,6 +26,5 @@ internal static class DiagnosticsSink
 
     public static void Clear() => Counts.Clear();
 
-    public static string ToJson() => JsonSerializer.Serialize(Snapshot(),
-        new JsonSerializerOptions { WriteIndented = true });
+    public static string ToJson() => JsonSerializer.Serialize(Snapshot(), JsonOptions);
 }

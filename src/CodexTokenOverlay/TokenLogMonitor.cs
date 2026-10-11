@@ -49,6 +49,7 @@ internal sealed class TokenLogMonitor : IDisposable
             if (string.Equals(_root, normalized, StringComparison.OrdinalIgnoreCase)) return;
             _root = normalized;
             foreach (var watcher in _watchers) watcher.Dispose();
+            foreach (var cached in _readers.Values) cached.Dispose();
             _watchers.Clear(); _catalog.Clear(); _readers.Clear(); _readerOrder.Clear(); _version++; _lastScan = default;
             Interlocked.Exchange(ref _dirty, 1); CreateWatchers();
         }
@@ -175,15 +176,21 @@ internal sealed class TokenLogMonitor : IDisposable
             { _activeId = selected; _version++; }
             if (selected is null) return null;
             if (forceFullScan || Interlocked.Exchange(ref _dirty, 0) != 0 || DateTime.UtcNow - _lastScan >= TimeSpan.FromSeconds(1)) Scan(cancellationToken);
-            if (!_catalog.TryGetValue(selected, out var entry)) { _readers.Remove(selected); _readerOrder.Remove(selected); LastError ??= "等待所选会话日志"; return null; }
+            if (!_catalog.TryGetValue(selected, out var entry))
+            {
+                if (_readers.Remove(selected, out var missing)) missing.Dispose();
+                _readerOrder.Remove(selected); LastError ??= "等待所选会话日志"; return null;
+            }
             if (!_readers.TryGetValue(selected, out var reader) || !string.Equals(reader.Path, entry.LogPath, StringComparison.OrdinalIgnoreCase))
                 _readers[selected] = reader = new IncrementalSessionReader(entry.LogPath, selected);
             _readerOrder.Remove(selected); _readerOrder.AddLast(selected);
             while (_readers.Count > ReaderCacheCapacity)
             {
-                _readers.Remove(_readerOrder.First!.Value); _readerOrder.RemoveFirst();
+                _readers.Remove(_readerOrder.First!.Value, out var evicted);
+                _readerOrder.RemoveFirst();
+                evicted?.Dispose();
             }
-            try { var snapshot = reader.Read(cancellationToken); LastError = null; return snapshot; }
+            try { var snapshot = reader.Read(cancellationToken: cancellationToken); LastError = null; return snapshot; }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             { LastError = "会话日志暂时无法读取"; return reader.Snapshot; }
         }
@@ -192,11 +199,17 @@ internal sealed class TokenLogMonitor : IDisposable
     { lock (_sync) return _readers.TryGetValue(threadId, out var reader) ? reader.TotalBytesRead : null; }
     public void Dispose()
     {
-        lock (_sync) { _disposed = true; foreach (var watcher in _watchers) watcher.Dispose(); _watchers.Clear(); }
+        lock (_sync)
+        {
+            _disposed = true;
+            foreach (var watcher in _watchers) watcher.Dispose();
+            foreach (var cached in _readers.Values) cached.Dispose();
+            _readers.Clear(); _readerOrder.Clear(); _watchers.Clear();
+        }
     }
 }
 
-internal sealed class IncrementalSessionReader(string path, string threadId)
+internal sealed class IncrementalSessionReader(string path, string threadId) : IDisposable
 {
     private const int MaxLineBytes = 32 * 1024 * 1024;
     private long _offset, _knownLength;
@@ -219,8 +232,11 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
     public TokenSnapshot? Snapshot { get; private set; }
     internal long TotalBytesRead { get; private set; }
     internal long ReadOffset => _offset;
+    // The parse buffer is the only unmanaged-ish resource; evicting a cached reader
+    // must release it rather than waiting for a finalizer that never runs.
+    public void Dispose() => _partial.Dispose();
 
-    public TokenSnapshot? Read(CancellationToken cancellationToken = default, Action? blockProcessed = null)
+    public TokenSnapshot? Read(Action? blockProcessed = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var info = new FileInfo(Path);
@@ -294,17 +310,21 @@ internal sealed class IncrementalSessionReader(string path, string threadId)
             if (type == "turn_context") { _ledger.ObserveContext(payload); _model = String(payload, "model") ?? _model; return; }
             if (type == "token_usage_record")
             {
+                // Speed is a per-turn measurement, not a ledger entry: relays that omit
+                // response_id dedup to one call per thread, yet every record still reports
+                // the turn's growing output. Observe the speed before the dedup gate.
+                var recordUsage = payload.TryGetProperty("usage", out var rawUsage) && rawUsage.ValueKind == JsonValueKind.Object
+                    ? UsageAmounts.Parse(rawUsage) : new UsageAmounts(null, null, null, null);
+                ObserveSpeed(root, payload, recordUsage);
                 if (_ledger.ObserveRecord(payload))
                 {
-                    var usageRecord = payload.TryGetProperty("usage", out var raw) && raw.ValueKind == JsonValueKind.Object
-                        ? UsageAmounts.Parse(raw) : new UsageAmounts(null, null, null, null);
+                    var usageRecord = recordUsage;
                     var aggregate = payload.TryGetProperty("thread_token_usage", out var reported) && reported.ValueKind == JsonValueKind.Object
                         ? UsageAmounts.Parse(reported) : null;
                     var hasIdentity = new[] { String(payload, "thread_id"), String(payload, "session_id"), String(payload, "response_id") }
                         .All(value => !string.IsNullOrWhiteSpace(value));
                     _liveUsage.Observe(usageRecord, aggregate, hasIdentity);
                     _contextUsed = usageRecord.Total ?? TokenSnapshot.Sum(usageRecord.Input, usageRecord.Output);
-                    ObserveSpeed(root, payload, usageRecord);
                     UpdateTimestamp(root);
                 }
                 return;

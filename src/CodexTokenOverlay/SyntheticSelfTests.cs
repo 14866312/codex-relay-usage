@@ -5,6 +5,9 @@ namespace CodexTokenOverlay;
 
 internal static class SyntheticSelfTests
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+        { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
     internal static DiagnosticsRunner.SelfTestResult Run() => SelfTest();
     private static DiagnosticsRunner.SelfTestResult SelfTest()
     {
@@ -101,6 +104,27 @@ internal static class SyntheticSelfTests
             Append(speedPath, Record("turn-next", "2026-10-02T10:04:06Z", "resp-8", 1_700, 0, 24, 44));
             speed = monitor.Poll(true)!;
             Check("record after completion uses the stored generation window", Math.Abs(speed.OutputSpeed!.Value - 44 / 3.0) < 0.01);
+            var idlessPath = Path.Combine(directory, "sessions", "idless.jsonl");
+            File.WriteAllText(idlessPath, Meta("idless") + (char)10, utf8);
+            Append(idlessPath, Started("turn-idless", "2026-10-02T10:05:00Z"));
+            Append(idlessPath, JsonSerializer.Serialize(new { timestamp = "2026-10-02T10:05:02Z", type = "token_usage_record", payload = new
+            {
+                thread_id = "idless", session_id = "idless", response_id = "", turn_id = "turn-idless",
+                usage = new { input_tokens = 1_000L, cached_input_tokens = 0L, cache_write_input_tokens = 0L, output_tokens = 40L, reasoning_output_tokens = 0L, total_tokens = 1_040L },
+                turn_token_usage = new { input_tokens = 1_000L, cached_input_tokens = 0L, cache_write_input_tokens = 0L, output_tokens = 40L, reasoning_output_tokens = 0L, total_tokens = 1_040L }
+            } }));
+            Append(idlessPath, JsonSerializer.Serialize(new { timestamp = "2026-10-02T10:05:04Z", type = "token_usage_record", payload = new
+            {
+                thread_id = "idless", session_id = "idless", response_id = "", turn_id = "turn-idless",
+                usage = new { input_tokens = 1_000L, cached_input_tokens = 0L, cache_write_input_tokens = 0L, output_tokens = 40L, reasoning_output_tokens = 0L, total_tokens = 1_040L },
+                turn_token_usage = new { input_tokens = 1_000L, cached_input_tokens = 0L, cache_write_input_tokens = 0L, output_tokens = 90L, reasoning_output_tokens = 0L, total_tokens = 1_090L }
+            } }));
+            monitor.PreferredThreadId = "idless";
+            speed = monitor.Poll(true)!;
+            Check("response_id-less records still advance speed", Math.Abs(speed.OutputSpeed!.Value - 22.5) < 0.001);
+            Append(idlessPath, Complete("turn-idless", 4_000, 1_000));
+            speed = monitor.Poll(true)!;
+            Check("response_id-less completion applies the generation window", Math.Abs(speed.OutputSpeed!.Value - 30.0) < 0.001);
             monitor.PreferredThreadId = "a";
             var presentation = OverlayPresentationBuilder.Create(s, DisplayField.Total, DisplayField.CacheHitRate, OverlaySettings.CreateDefault().VisibleFields);
             Check("exact expanded total", presentation.Total!.Value == "4,956,088 tok");
@@ -154,8 +178,7 @@ internal static class SyntheticSelfTests
             File.Delete(a); Check("archive move retains counts", monitor.Poll(true)!.TotalTokens == 4_956_088);
             File.WriteAllText(copy, Meta("a") + (char)10 + Usage(new { input_tokens = 1, output_tokens = 2 }) + (char)10, utf8);
             Check("file truncation reread", monitor.Poll(true)!.EffectiveTotalTokens == 3);
-            var rawModel = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { type = "turn_context", payload = new { model = "relay/中文模型" } },
-                new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }) + (char)10);
+            var rawModel = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { type = "turn_context", payload = new { model = "relay/中文模型" } }, JsonOptions) + (char)10);
             var splitAt = Array.IndexOf(rawModel, (byte)0xE4) + 1;
             using (var append = new FileStream(copy, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) append.Write(rawModel.AsSpan(0, splitAt));
             Check("partial UTF8 codepoint retains previous model", monitor.Poll(true)!.Model is null);

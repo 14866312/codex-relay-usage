@@ -40,7 +40,7 @@ internal sealed class CodexDebugRouteReader : IDisposable
         }
         try
         {
-            GetWindowThreadProcessId(windows[0].Handle, out var pid);
+            _ = GetWindowThreadProcessId(windows[0].Handle, out var pid);
             using var process = Process.GetProcessById((int)pid);
             return ReadProcess((int)pid, $"{windows[0].Handle}/{pid}/{process.StartTime.ToUniversalTime().Ticks}", cancellationToken);
         }
@@ -77,7 +77,7 @@ internal sealed class CodexDebugRouteReader : IDisposable
         catch (Exception e) when (e is HttpRequestException or WebSocketException or IOException or JsonException or OperationCanceledException or InvalidOperationException)
         {
             Disconnect();
-            if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             return _wasEnabled ? Unavailable() : null;
         }
     }
@@ -158,7 +158,7 @@ internal sealed class CodexDebugRouteReader : IDisposable
     internal static IReadOnlyList<int> OwnedLoopbackPorts(int pid)
     {
         var size = 0;
-        GetExtendedTcpTable(IntPtr.Zero, ref size, false, 2, 3, 0); // IPv4 / OWNER_PID_LISTENER
+        _ = GetExtendedTcpTable(IntPtr.Zero, ref size, false, 2, 3, 0); // IPv4 / OWNER_PID_LISTENER
         if (size <= 0 || size > 8 * 1024 * 1024) return [];
         var memory = Marshal.AllocHGlobal(size);
         try

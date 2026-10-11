@@ -1,0 +1,44 @@
+# Repository-wide defaults. See AGENTS.md for the prose version of these rules.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_var_when_type_is_apparent = true:silent
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+csharp_using_directive_placement = outside_namespace:suggestion
+dotnet_sort_system_directives_first = true
+csharp_new_line_before_open_brace = all
+csharp_prefer_braces = when_multiline:suggestion
+
+[*.ps1]
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml,md}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+# The Win32 text-buffer APIs below take StringBuilder by nature; rewriting them to
+# char[] would churn a verified interop path for no behavioral gain.
+[src/CodexTokenOverlay/CodexWindowLocator.cs]
+dotnet_diagnostic.CA1838.severity = none
+
+# RFC 6455 defines the WebSocket handshake accept key as SHA1; this fixture is a
+# test server, not a security boundary.
+[src/CodexTokenOverlay/DebugRouteTests.cs]
+dotnet_diagnostic.CA5350.severity = none
+
