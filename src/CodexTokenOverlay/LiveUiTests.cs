@@ -113,7 +113,12 @@ internal static class LiveUiTests
         strip.SetPresentation(presentation with { ExpandedRows = presentation.ExpandedRows.ToArray() });
         check("equivalent presentation does not schedule another repaint", invalidations == 0);
         var oldWidth = target.HostWindow.WindowBounds.Width; host.Width += 120;
-        check("resize refreshes live host dimensions", PumpUntil(() => target.HostWindow.WindowBounds.Width == oldWidth + 120));
+        var resized = PumpUntil(() => target.HostWindow.WindowBounds.Width == oldWidth + 120);
+        check(resized
+            ? "resize refreshes live host dimensions"
+            : "resize refreshes live host dimensions (old=" + oldWidth + " host=" + host.Width
+                + " target=" + target.HostWindow.WindowBounds.Width + " bounds=" + host.Bounds + " dpi=" + host.DeviceDpi + ")",
+            resized);
         strip.ApplyLayout(Layout(expanded: true)); strip.FinishFeedbackAnimation();
         var expandedRegion = strip.Region; var expandedState = strip.FeedbackFrame;
         host.Left += 20;

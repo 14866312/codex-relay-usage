@@ -617,9 +617,19 @@ internal static class CodexWindowLocator
             DwmwaExtendedFrameBounds,
             out var nativeExtendedFrameBounds,
             Marshal.SizeOf<NativeRectangle>());
-        var extendedFrameBounds = dwmResult == 0
-            ? ToIntRect(nativeExtendedFrameBounds)
-            : windowBounds;
+        // DWM can report success with an empty rectangle while a window is minimized or
+        // freshly created, and a headless session has no composited frame at all. Only
+        // trust the composited bounds when they describe a real rectangle, otherwise the
+        // GetWindowRect result is the authoritative geometry.
+        var extendedFrameBounds = windowBounds;
+        if (dwmResult == 0)
+        {
+            var composited = ToIntRect(nativeExtendedFrameBounds);
+            if (composited.Width > 0 && composited.Height > 0)
+            {
+                extendedFrameBounds = composited;
+            }
+        }
         if (extendedFrameBounds.Width < 500 || extendedFrameBounds.Height < 400)
         {
             return false;
