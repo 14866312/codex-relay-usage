@@ -1,28 +1,87 @@
-# Codex 用量助手 · Codex Usage Assistant 1.3.4
+# Codex 用量助手 · Codex Usage Assistant
 
-适用于 API 中转站模型的 Windows Codex 会话用量与费用估算工具，直接读取 Codex 本地日志，无需 API 密钥。
+[![Release](https://img.shields.io/github/v/release/14866312/codex-relay-usage?label=release&color=6f42c1)](https://github.com/14866312/codex-relay-usage/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/14866312/codex-relay-usage?color=blue)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4)](#系统要求)
+[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](#系统要求)
+[![Docs](https://img.shields.io/badge/docs-中文%20%7C%20English-9cf)](README.zh-CN.md)
 
-1.3.4 不再创建或改写桌面／开始菜单的 Codex 快捷方式；旧版写入的入口会在设置或取消时清理并还原备份。1.3.3 修复刚切换对话时通常需要点击两次的问题：识别会在同一次点击中刷新当前页面，再取得准确 ID。系统通知弹窗已移除，包括成功提示；失败原因仅在悬浮条显示，切换页面后清除。
-
-悬浮条位于顶部“文件／编辑／视图／帮助”右侧空白区，点击向下展开。支持悬停／按下反馈、主题、位置缩放、逐次用量更新、会话自动跟随和费用估算。金额统一显示三位小数，小额正数显示 <$0.001，内部计算保留完整精度。
+**Windows 上的 Codex 会话用量与费用悬浮条：直接读取 Codex 本地日志，无需 API 密钥。** 面向使用 API 中转站模型的 Codex Desktop 用户，实时显示当前会话的 Token、缓存命中、上下文占用，以及按个人配置估算的费用。
 
 ![新版界面总览（实际窗体、合成数据）](previews/overview.png)
 
-采用石墨底紫色计量图标、浅深色圆角卡片、上下文进度条、统一按钮与输入框。托盘命令按“外观”和“会话与数据”归类，模型价格采用左右分栏，费用明细支持已计价与未计价页签。悬浮条和卡片均有悬停、按下反馈；窗口支持高 DPI 及小屏幕适配。
+## 亮点
 
-1.3.1 修复同名识别按钮无效：点击“自动识别”调用 Codex 的“复制深度链接”（Ctrl+Alt+L），读取当前页面的唯一会话 ID，再恢复原剪贴板内容。采用当前侧栏条目的身份记住结果，返回已识别条目时自动恢复；切换、超时或更换日志目录会拒绝旧结果。普通页面不显示该按钮，识别期间显示“识别中…”。保留输出速度、费用和精简界面。
+- **零配置、只读**：解析 Codex 本地日志与本地配置，不需要 API 密钥、代理或 ChatGPT 登录。
+- **随调用更新**：对话进行中，每条调用报告到达即刷新，不必等整轮结束。
+- **贴着 Codex 顶栏**：默认停在“文件／编辑／视图／帮助”右侧空白区，点击向下展开，跟随窗口移动与缩放。
+- **同名对话也能认**：点“自动识别”读取当前页面的唯一会话 ID，同名、标题截断、侧栏隐藏都不影响。
+- **费用可配置**：基础价乘倍率或直接折后价、可关闭的双档价格、精确模型别名绑定、分模型汇总、改价重算历史。
+- **轻量原生**：WinForms / GDI+，不引入 UI 框架，没有常驻辅助进程。
 
-- [下载 Windows x64 独立版](https://github.com/14866312/codex-relay-usage/releases/latest)：解压，运行 CodexRelayUsage.exe；托盘勾选“开机启动”，或双击“设置开机自动启动.vbs”。自带 .NET 10 运行时。
-- [中文使用说明](README.zh-CN.md) · [版本变更](CHANGELOG.md) · [验证记录](ACCEPTANCE.zh-CN.md)
+## 下载与安装
 
-开机启动只启动用量工具，不再创建或改写桌面／开始菜单的 Codex 快捷方式；之前版本写入的入口会在设置或取消时清理并还原备份。需要本地页面路由识别参数时，双击独立版目录的“启动 Codex 自动用量.vbs”，它按当前安装路径启动 Codex，并携带回环地址、随机端口参数；同名对话据唯一 ID 区分。从原商店入口打开时，驻留工具同样会显示，但没有该连接的进程仍使用兼容识别。当前运行的 Codex 不会被安装程序关闭或重启。主动退出工具后，下次登录或手动运行才会恢复；移动或升级独立版目录后重新设置启动。
+1. 打开 [最新 Release](https://github.com/14866312/codex-relay-usage/releases/latest)，下载 `CodexRelayUsage-<版本>-win-x64.zip`。
+2. 解压到任意目录，运行 `CodexRelayUsage.exe`；成品自带 .NET 10 运行时，无需安装 SDK。
+3. 托盘勾选“开机启动”，或双击目录内的“设置开机自动启动.vbs”。
 
-对话进行中随每条调用用量报告更新，不必等整轮完成。日志没有逐个生成 token 的计数，尚未报告的单次调用不能提前显示准确用量。窗口由 Windows 原生位置事件跟随，保留 16ms 拖动补偿。新版复用未变化的日志快照和读缓冲，降低后台补偿频率、跳过重复展示更新；发布保留中英文资源，减少其他语言运行时资源。
+同一时间只运行一个实例，当前运行的 Codex 无需关闭。1.3.4 不再创建或改写桌面／开始菜单的 Codex 快捷方式；旧版写入的入口会在设置或取消时清理并还原备份。
 
-继续使用轻量的 WinForms / GDI+，没有新增 UI 框架或常驻辅助进程。登录入口直接启动 GUI EXE；历史版本的体积与资源样本见验证记录。
+## 界面
 
-费用支持基础价乘倍率／直接折后价、可关闭的双档价格、精确模型别名绑定、分模型汇总和改价重算历史。按去重的逐次调用计费，累计快照只展示 Token 并核对完整性。只统计当前线程，不合并子代理。缺失或被上游改写的用量无法从日志还原，金额为按当前配置估算的费用。
+| 浅色 | 深色 |
+| --- | --- |
+| ![浅色展开](previews/light-expanded.png) | ![深色展开](previews/dark-expanded.png) |
+| ![浅色费用明细](previews/light-expanded-cost.png) | ![深色费用明细](previews/dark-expanded-cost.png) |
 
-![费用与模型价格（合成数据）](previews/light-expanded-cost.png)
+石墨底紫色计量图标、浅深色圆角卡片、上下文进度条与统一按钮／输入框；托盘命令按“外观”和“会话与数据”归类，模型价格左右分栏，费用明细分“已计价／未计价”页签。悬浮条和卡片均有悬停、按下反馈，支持高 DPI 与小屏幕适配。更多实拍图见 [`previews/`](previews)。
 
-升级保留个人价格、位置、字段、主题与开机启动配置。EXE 名 CodexRelayUsage.exe、配置目录 CodexRelayUsage 和仓库地址继续兼容旧版本。个人价格和设置不进入源码或发布包。由 [codex-token-overlay](https://github.com/soleillevant0125/codex-token-overlay) 的 MIT 代码衍生，原版权与 .NET 许可均保留，见 [UPSTREAM.md](UPSTREAM.md)。
+## 系统要求
+
+- Windows 10 / 11（x64）
+- 自包含发布，无需预装 .NET 运行时；从源码构建需 [.NET 10 SDK](global.json)
+- 可读取 Codex Desktop 本地日志（日志目录可在设置中更换）
+
+## 常见问题
+
+<details>
+<summary>为什么有时要点两次“自动识别”？</summary>
+
+1.3.3 起不再需要：识别在同一次点击内刷新当前页面，再调用 Codex 的“复制深度链接”（Ctrl+Alt+L）读取唯一会话 ID，并恢复原剪贴板内容。若该快捷键被改动或不支持，悬浮条会提示未提供链接；切换对话、超时或更换日志目录后，迟到结果不会建立绑定。
+</details>
+
+<details>
+<summary>费用为什么显示“未计价”或与账单不一致？</summary>
+
+金额始终是按当前配置的**估算**。日志缺失或被上游改写的用量无法还原；未配置价格的模型归入“未计价”页签。金额统一显示三位小数，小额正数显示 `<$0.001`，内部计算保留完整精度。
+</details>
+
+<details>
+<summary>会读取对话内容或上传数据吗？</summary>
+
+不会。工具只读本地日志与本地配置，不联网上报；个人价格与设置不进入源码或发布包。
+</details>
+
+<details>
+<summary>为什么只统计当前线程？</summary>
+
+按去重的逐次调用计费，只统计当前线程，不合并子代理；累计快照只展示 Token 并核对完整性。
+</details>
+
+## 构建与验证
+
+```powershell
+dotnet build .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release
+dotnet publish .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release -r win-x64 --self-contained true -o .\artifacts\verify
+.\scripts\Verify.ps1 -ExecutablePath .\artifacts\verify\CodexRelayUsage.exe
+```
+
+`*Tests.cs` 与合成自检会编译进发布的 EXE，`Verify.ps1` 校验的就是用户拿到的同一份二进制，请在交互式 Windows 桌面上执行。
+
+## 文档
+
+[中文使用说明](README.zh-CN.md) · [版本变更](CHANGELOG.md) · [验证记录](ACCEPTANCE.zh-CN.md) · [上游与许可](UPSTREAM.md)
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。由 [codex-token-overlay](https://github.com/soleillevant0125/codex-token-overlay) 的 MIT 代码衍生，原版权与 .NET 许可均保留，见 [UPSTREAM.md](UPSTREAM.md)。
