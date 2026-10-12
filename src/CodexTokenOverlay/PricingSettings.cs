@@ -55,21 +55,12 @@ internal static class PricingStore
     {
         error = settings.ValidationIssue(); if (error is not null) return false;
         path ??= DefaultPath;
-        string? temporary = null;
         try
         {
-            path = Path.GetFullPath(path);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            {
-                JsonSerializer.Serialize(stream, settings, Options); stream.Flush(flushToDisk: true);
-            }
-            // Same-volume rename replaces the complete file, never a partially written configuration.
-            File.Move(temporary, path, overwrite: true); temporary = null; return true;
+            AtomicFile.Write(path, stream => JsonSerializer.Serialize(stream, settings, Options));
+            return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         { error = "保存失败，原价格未更改：" + e.Message; return false; }
-        finally { if (temporary is not null) { try { File.Delete(temporary); } catch (IOException) { } catch (UnauthorizedAccessException) { } } }
     }
 }

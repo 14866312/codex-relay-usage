@@ -237,13 +237,11 @@ internal sealed class OverlaySettings
         var path = settingsPath ?? DefaultSettingsPath;
         try
         {
-            var directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrWhiteSpace(directory))
+            AtomicFile.Write(path, stream =>
             {
-                Directory.CreateDirectory(directory);
-            }
-
-            File.WriteAllText(path, Serialize(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                var bytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(Serialize());
+                stream.Write(bytes, 0, bytes.Length);
+            });
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

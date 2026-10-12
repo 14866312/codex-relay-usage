@@ -211,6 +211,32 @@ internal static class SessionCostTests
             check("failed atomic save keeps original prices", !success && error is not null && File.ReadAllText(path) == before);
         }
         check("failed price save cleans temporary file", Directory.GetFiles(directory, "prices.json.*.tmp").Length == 0);
+        // The shared atomic write behind both saves: partial output and a locked target
+        // both keep the old file and never leave a scratch file behind.
+        var atomicPath = Path.Combine(directory, "atomic.json");
+        File.WriteAllText(atomicPath, "{\"kept\":true}");
+        var injected = false;
+        try
+        {
+            AtomicFile.Write(atomicPath, stream =>
+            {
+                stream.WriteByte((byte)'{');
+                throw new IOException("injected");
+            });
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { injected = true; }
+        check("write failure after partial output is surfaced", injected);
+        check("partial write keeps the original file", File.ReadAllText(atomicPath) == "{\"kept\":true}");
+        check("partial write cleans its temporary file", Directory.GetFiles(directory, "atomic.json.*.tmp").Length == 0);
+        using (var lockFile = new FileStream(atomicPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            injected = false;
+            try { AtomicFile.Write(atomicPath, stream => stream.WriteByte((byte)'{')); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { injected = true; }
+        }
+        check("locked target failure is surfaced", injected);
+        check("locked target keeps the original file", File.ReadAllText(atomicPath) == "{\"kept\":true}");
+        check("locked target cleans its temporary file", Directory.GetFiles(directory, "atomic.json.*.tmp").Length == 0);
         File.WriteAllText(path, "{broken"); loaded = PricingStore.Load(path);
         check("corrupt price file reports failure without overwriting", loaded.Error is not null && File.ReadAllText(path) == "{broken");
         File.WriteAllText(path, "{\"Version\":999,\"Profiles\":[]}");
@@ -224,6 +250,13 @@ internal static class SessionCostTests
         var settingsPath = Path.Combine(directory, "cost-settings.json"); settings.Save(settingsPath); var restored = OverlaySettings.Load(settingsPath);
         check("1.1.0 retains top/manual placement and scaling", restored.SettingsVersion == 4 && restored.ManualPlacementEnabled && restored.OverlayScalePercent == 120 && restored.MainAttachment == settings.MainAttachment);
         check("cost display field and compact selection persist", restored.VisibleFields.HasFlag(DisplayField.Cost) && restored.CollapsedSecondaryField == DisplayField.Cost);
+        var settingsBefore = File.ReadAllText(settingsPath);
+        using (var lockFile = new FileStream(settingsPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            check("settings save reports a locked file instead of overwriting",
+                !settings.TrySave(settingsPath) && File.ReadAllText(settingsPath) == settingsBefore);
+        }
+        check("failed settings save cleans its temporary file", Directory.GetFiles(directory, "cost-settings.json.*.tmp").Length == 0);
         var r = SampleResult(); var shown = OverlayPresentationBuilder.Create(DiagnosticsRunner.Example(), DisplayField.Total, DisplayField.Cost, DisplayField.Cost, r);
         check("expanded cost includes four components", shown.ExpandedRows.Count == 5 && shown.Secondary.HasValue && shown.IssueText is null);
         check("compact cost does not repeat label", OverlayPresentationBuilder.CompactText(shown.Secondary) == "估算 $0.067");
