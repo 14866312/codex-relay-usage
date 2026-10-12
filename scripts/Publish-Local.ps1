@@ -65,8 +65,7 @@ try {
             $sourceFiles.Add($file)
         }
     }
-    # Knowledge base Markdown and the CI workflow ship with the source package; the
-    # untracked docs/architecture-diagram.html is deliberately not packaged.
+    # Knowledge base Markdown and the CI workflow ship with the source package.
     foreach ($folder in @("docs", ".github")) {
         foreach ($file in (Get-ChildItem -LiteralPath (Join-Path $repositoryRoot $folder) -Recurse -File |
                 Where-Object { $_.Extension -in @(".md", ".yml") })) {

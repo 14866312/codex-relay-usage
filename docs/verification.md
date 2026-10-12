@@ -11,7 +11,7 @@ dotnet publish .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release -r wi
 - `dotnet publish` 通过 csproj 的发布项把 `Install-CodexStartup.ps1` 与 `Install-Startup-Package.vbs` 复制到发布目录的 `scripts/`，因此上面的 publish → Verify 命令可直接运行。
 - 完整发布走 `\scripts\Publish-Local.ps1 -DotnetPath dotnet`：自包含 x64 EXE、独立 ZIP、源码 ZIP、SHA256 与预览图。
 - `Publish-Local.ps1` 的预览步骤包含实时探针：生成 `previews/cost-related-live.png`（浅色／深色），即修复后明细窗口跟随成员追加的验证截图。
-- SDK 由 global.json 指定（已验证 10.0.401）；源码包包含 AGENTS.md、CONTEXT.md、docs 知识库 Markdown 与 .github/workflows（未跟踪的 docs/architecture-diagram.html 不进入），排除 bin/obj、SDK、用户设置与真实日志。
+- SDK 由 global.json 指定（已验证 10.0.401）；源码包包含 AGENTS.md、CONTEXT.md、docs 知识库 Markdown 与 .github/workflows，排除 bin/obj、SDK、用户设置与真实日志。
 
 ## 本机部署（开发机快捷方式）
 
