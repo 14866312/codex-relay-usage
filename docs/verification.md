@@ -30,6 +30,8 @@ dotnet publish .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release -r wi
 | --speed-log-probe | 纯生成速度复算 |
 | --ipc-probe | IPC 订阅诊断（不用于生产识别） |
 
+需要采集 Codex 启动后的“页面就绪”时间线时，用 `--view-probe out.jsonl 2000` 连续采样（每 150 ms 一行），以 `Error` 从 `当前页面尚未就绪` 变为识别结果的时间点为恢复时刻；本机复现记录见 [codex-integration.md](codex-integration.md)。
+
 这些输出含个人会话标识与元数据，留在本机，不加入源码或公开发布。
 
 ## 交付验证记录与归档
