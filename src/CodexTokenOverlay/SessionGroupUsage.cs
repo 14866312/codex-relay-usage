@@ -42,7 +42,10 @@ internal sealed record RelatedMemberUsage(
 
 internal sealed record RelatedUsageTotals(long? TotalTokens, decimal? Cost, int Members, int ConfirmedMembers)
 {
-    public bool IsComplete => Members > 0 && ConfirmedMembers == Members;
+    // An observation that cannot prove whether side chats exist keeps the total partial
+    // even when every visible member is confirmed.
+    public bool ObservationIncomplete { get; init; }
+    public bool IsComplete => Members > 0 && ConfirmedMembers == Members && !ObservationIncomplete;
 }
 
 // Immutable group snapshot. Selection revision, relation version and pricing version
@@ -52,6 +55,10 @@ internal sealed record SessionGroupSnapshot(
     IReadOnlyList<RelatedMemberUsage> Members, IReadOnlyList<string> Notes)
 {
     public static readonly SessionGroupSnapshot Waiting = new(null, 0, 0, 0, 0, [], []);
+
+    // True when the runtime entry could not prove whether side chats exist (unavailable or
+    // truncated); the known total must say partial even if every visible member is complete.
+    public bool ObservationIncomplete { get; init; }
 
     public RelatedMemberUsage? Root => Members.FirstOrDefault(m => m.Kind == RelatedMemberKind.Root);
 
@@ -63,9 +70,9 @@ internal sealed record SessionGroupSnapshot(
 
     // Known total: only numbers derived from a member's own confirmed calls contribute;
     // a partial member still counts when its own calls are the source of the number.
-    public RelatedUsageTotals KnownTotals => Aggregate(Members.ToArray());
+    public RelatedUsageTotals KnownTotals => Aggregate(Members.ToArray(), !ObservationIncomplete);
 
-    private static RelatedUsageTotals Aggregate(RelatedMemberUsage[] selected)
+    private static RelatedUsageTotals Aggregate(RelatedMemberUsage[] selected, bool observationComplete = true)
     {
         long? tokens = null;
         decimal? cost = null;
@@ -84,7 +91,7 @@ internal sealed record SessionGroupSnapshot(
             }
         }
         catch (OverflowException) { tokens = null; cost = null; }
-        return new(tokens, cost, selected.Length, confirmed);
+        return new(tokens, cost, selected.Length, confirmed) { ObservationIncomplete = !observationComplete };
     }
 
     public bool HasUnconfirmed => Members.Any(m => m.Kind == RelatedMemberKind.Unconfirmed);

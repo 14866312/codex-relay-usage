@@ -130,22 +130,32 @@ internal static class RelatedUsageTests
         using var monitor = new TokenLogMonitor(Path.Combine(root, "sessions"));
         var runtime = new ScriptedRuntime(RuntimeUsageReadResult.Unavailable("未启用本地调试连接"),
             Observed(SideId, RootId, 20, 0, 10), new RuntimeUsageReadResult(true, null, null, []),
+            new RuntimeUsageReadResult(true, null, null, [], "侧聊结果超过观察上限"),
             Observed(SideId, RootId, 20, 0, 10));
         var group = new SessionGroupMonitor(monitor, runtime);
         var first = group.Update(RootId, 1, Prices, default);
         check("side chats stay out until the runtime entry answers", first.Members.All(m => m.Kind != RelatedMemberKind.SideChat) &&
             first.Notes.Any(n => n.Contains("侧聊")));
+        check("an unavailable entry keeps the known total partial", !first.KnownTotals.IsComplete && first.KnownTotals.TotalTokens == 15);
         var second = group.Update(RootId, 2, Prices, default);
         check("mid-observation side chat appears with observed tokens",
             second.Members.Single(m => m.ThreadId == SideId) is { Kind: RelatedMemberKind.SideChat, TotalTokens: 30 } &&
             second.KnownTotals.TotalTokens == 45);
+        check("a complete observation confirms the known total", second.KnownTotals.IsComplete);
         var closed = group.Update(RootId, 3, Prices, default);
         check("closed side chat keeps its observed numbers", closed.Members.Single(m => m.ThreadId == SideId) is
             { TotalTokens: 30, Issue: "已不在观察中 · 保留上次观察值" } && closed.Notes.Any(n => n.Contains("保留上次观察值")));
-        var restored = group.Update(RootId, 4, Prices, default);
+        check("an empty observation stays complete instead of counting as unknown", closed.KnownTotals.IsComplete);
+        var truncated = group.Update(RootId, 4, Prices, default);
+        check("a truncated observation retains the last observed side chat",
+            truncated.Members.Single(m => m.ThreadId == SideId) is { TotalTokens: 30, Issue: "观察不完整 · 保留上次观察值" } &&
+            truncated.Notes.Any(n => n.Contains("侧聊观察不完整") && n.Contains("侧聊结果超过观察上限")));
+        check("a truncated observation marks the known total partial",
+            !truncated.KnownTotals.IsComplete && truncated.KnownTotals.TotalTokens == 45);
+        var restored = group.Update(RootId, 5, Prices, default);
         check("reconnected observation resumes without doubling", restored.KnownTotals.TotalTokens == 45);
         var unknownParent = new SessionGroupMonitor(monitor, new ScriptedRuntime(Observed(unknown, "12121212-3434-4434-8434-343434343434", 5, 0, 5)))
-            .Update(RootId, 5, Prices, default);
+            .Update(RootId, 6, Prices, default);
         check("side chat with unknown parent stays unconfirmed and uncounted",
             unknownParent.Members.Single(m => m.ThreadId == unknown).Kind == RelatedMemberKind.Unconfirmed &&
             unknownParent.KnownTotals.TotalTokens == 15);
@@ -269,14 +279,33 @@ internal static class RelatedUsageTests
     private static void TransportTests(Action<string, bool> check)
     {
         using var page = new SyntheticCdpPage();
-        page.Payload = "[{\"id\":\"" + SideId + "\",\"side\":true,\"ephemeral\":true,\"parent\":\"" + RootId +
-            "\",\"parentPath\":\"/local/" + RootId + "\",\"counts\":{\"inputTokens\":20,\"cachedInputTokens\":5,\"outputTokens\":10,\"totalTokens\":30}}]";
+        page.Payload = "{\"observations\":[{\"id\":\"" + SideId + "\",\"side\":true,\"ephemeral\":true,\"parent\":\"" + RootId +
+            "\",\"parentPath\":\"/local/" + RootId + "\",\"counts\":{\"inputTokens\":20,\"cachedInputTokens\":5,\"outputTokens\":10,\"totalTokens\":30}}],\"truncated\":false,\"reason\":null}";
         using (var reader = new CodexRuntimeUsageReader())
         {
             var result = reader.ReadProcess(Environment.ProcessId, "runtime-transport", default);
             check("runtime transport parses the whitelist projection", result.IsAvailable && result.Observations.Count == 1 &&
                 result.Observations[0] is { ThreadId: SideId, ParentThreadId: RootId, IsSideConversation: true } &&
                 result.Observations[0].Counts!.EffectiveTotal == 30 && result.Observations[0].Counts!.CacheRead == 5);
+        }
+        page.Payload = "{\"observations\":[],\"truncated\":false,\"reason\":null}";
+        using (var reader = new CodexRuntimeUsageReader())
+        {
+            var empty = reader.ReadProcess(Environment.ProcessId, "runtime-transport-empty", default);
+            check("an empty projection without a reason stays unavailable", !empty.IsAvailable && empty.Observations.Count == 0);
+        }
+        page.Payload = "{\"observations\":[],\"truncated\":true,\"reason\":\"会话 store 超过观察上限（257）\"}";
+        using (var reader = new CodexRuntimeUsageReader())
+        {
+            var truncated = reader.ReadProcess(Environment.ProcessId, "runtime-transport-truncated", default);
+            check("runtime transport carries the truncation reason", truncated.IsAvailable &&
+                truncated.TruncationReason == "会话 store 超过观察上限（257）" && !truncated.ObservationComplete);
+        }
+        page.Payload = "[]";
+        using (var reader = new CodexRuntimeUsageReader())
+        {
+            var legacy = reader.ReadProcess(Environment.ProcessId, "runtime-transport-legacy", default);
+            check("an unknown projection shape stays unavailable", !legacy.IsAvailable && legacy.Observations.Count == 0);
         }
         page.Payload = "null";
         using (var reader = new CodexRuntimeUsageReader())

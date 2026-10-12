@@ -40,6 +40,7 @@ internal sealed class SessionGroupMonitor
             _memberCosts.Remove(departed);
         var notes = new List<string>();
         if (!runtime.IsAvailable && runtime.Reason is { } reason) notes.Add("侧聊：" + reason);
+        if (runtime.TruncationReason is { } truncation) notes.Add("侧聊观察不完整：" + truncation);
         var rows = new List<RelatedMemberUsage>();
         var observedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var overLimit = 0;
@@ -68,17 +69,23 @@ internal sealed class SessionGroupMonitor
             rows.Add(ReadMember(member, prices, cancellationToken));
         }
         if (overLimit > 0) notes.Add(overLimit + " 个成员超过读取上限，未计入已知合计");
-        // A closed side chat keeps its last observed numbers in memory; the note states the scope.
+        // A closed or unobserved side chat keeps its last observed numbers in memory; a
+        // truncated observation says so instead of claiming the side chat is closed.
         var retained = _observedSideChats.Where(pair => !observedIds.Contains(pair.Key)).ToArray();
         if (retained.Length > 0)
         {
-            rows.AddRange(retained.Select(pair => pair.Value with { Issue = "已不在观察中 · 保留上次观察值" }));
-            notes.Add(retained.Length + " 个侧聊已不在运行时观察中，保留上次观察值");
+            var incomplete = runtime.TruncationReason is not null;
+            rows.AddRange(retained.Select(pair => pair.Value with
+                { Issue = (incomplete ? "观察不完整 · 保留上次观察值" : "已不在观察中 · 保留上次观察值") }));
+            notes.Add(incomplete
+                ? retained.Length + " 个侧聊保留上次观察值（观察不完整）"
+                : retained.Length + " 个侧聊已不在运行时观察中，保留上次观察值");
         }
         var unconfirmed = rows.Count(r => r.Kind == RelatedMemberKind.Unconfirmed);
         if (unconfirmed > 0) notes.Add(unconfirmed + " 个成员关系未确认，未计入已知合计");
         if (rows.Any(r => r.TokenCoverage == RelatedCoverage.Reading)) notes.Add("正在分片读取成员日志");
-        return new(rootThreadId, selectionRevision, catalog.Version, prices.Version, ++_version, rows, notes);
+        return new(rootThreadId, selectionRevision, catalog.Version, prices.Version, ++_version, rows, notes)
+            { ObservationIncomplete = !runtime.ObservationComplete };
     }
 
     // Root first, then member ids in a stable order: the selection must not change between
