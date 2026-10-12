@@ -176,6 +176,8 @@ internal static class SyntheticSelfTests
             var presentation = OverlayPresentationBuilder.Create(s, DisplayField.Total, DisplayField.CacheHitRate, OverlaySettings.CreateDefault().VisibleFields);
             Check("exact expanded total", presentation.Total!.Value == "4,956,088 tok");
             Check("expanded cached and uncached", presentation.ExpandedRows.Any(r => r.Value == "4,586,752 tok") && presentation.ExpandedRows.Any(r => r.Value == "290,371 tok"));
+            Check("cache hit rate keeps two decimals", presentation.Secondary.Value == "94.05%"
+                && presentation.ExpandedRows.Any(r => r.Field == DisplayField.CacheHitRate && r.Value == "94.05%"));
             var partial = Usage(new { input_tokens = 100L, output_tokens = 5L, cached_input_tokens = 0L });
             File.AppendAllText(a, partial[..(partial.Length / 2)], utf8);
             Check("partial row retains valid snapshot", monitor.Poll(true)!.TotalTokens == 4_956_088);

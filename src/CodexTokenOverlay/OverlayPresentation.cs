@@ -60,7 +60,7 @@ internal static class OverlayPresentationBuilder
             DisplayField.Output => Number(s.OutputTokens),
             DisplayField.CacheHit => Number(s.CachedInputTokens, !s.InputTokens.HasValue || s.CacheIsValid),
             DisplayField.CacheMiss => s.CachedInputTokens > s.InputTokens || s.InputTokens < 0 || s.CachedInputTokens < 0 ? "异常" : Number(s.UncachedInputTokens),
-            DisplayField.CacheHitRate => s.CachedInputTokens > s.InputTokens || s.InputTokens < 0 || s.CachedInputTokens < 0 ? "异常" : Percent(s.CacheHitPercent),
+            DisplayField.CacheHitRate => s.CachedInputTokens > s.InputTokens || s.InputTokens < 0 || s.CachedInputTokens < 0 ? "异常" : Rate(s.CacheHitPercent),
             DisplayField.Reasoning => Number(s.ReasoningOutputTokens, s.ReasoningIsValid),
             DisplayField.Context => Number(s.ContextUsedTokens) + " / " + Number(s.ContextWindowTokens),
             DisplayField.ContextPercent => Percent(s.ContextPercent),
@@ -79,6 +79,8 @@ internal static class OverlayPresentationBuilder
         return new(field, labels.Compact, labels.Full, value, hasValue);
     }
     public static string Percent(double? percent) => percent.HasValue ? percent.Value.ToString("0", Invariant) + "%" : "—";
+    // The cache rate keeps hundredths; the other percentages stay whole.
+    public static string Rate(double? percent) => percent.HasValue ? percent.Value.ToString("0.00", Invariant) + "%" : "—";
     public static string FormatTokenCount(long? value) => value switch
     {
         null => "—",
