@@ -10,6 +10,7 @@
 - 精简标题解析：日志监视器复用识别链路的 SessionTitleIndex（同一套缓存与解析规则），删除重复的逐次读取实现与两个仅供测试使用的旧解析方法；空白标题不再进入索引，会话列表对这类标题直接显示会话 ID。
 - 新增 1 项索引检查（文件长度与写入时间不变时复用缓存），坏行、空白标题、半行与重命名改由 `Titles` 校验，身份解析检查改用生产 `SidebarSessionResolver`。
 - 精简测试设施：路由检查与运行时用量检查各自实现的合成调试页面服务器合并为内部 `SyntheticCdpPage`（`Payload`／`Delay`／`ForeignEndpoint` 三种控制），逐连接异常处理保证一次取消或断连不会终止监听；新增 1 项“断连后仍可读取”的检查，`.editorconfig` 的 SHA1 说明随之合并。
+- 删除无用代码：全树检索确认无调用的 `DrawDatabaseIcon`、`DrawHighlightedMetric` 与探针 `ScaleDip` 移除；金额接口收敛为 `Money(decimal)`（原 `compact` 参数在方法体内未被使用，“部分记录”后缀仍由 `Summary` 的 `compact` 控制）。三位小数与 `<$0.001` 输出不变，金额文档同步为当前显示规则，两组重复金额断言合并。
 
 ## 1.3.10 — 2026-10-12
 

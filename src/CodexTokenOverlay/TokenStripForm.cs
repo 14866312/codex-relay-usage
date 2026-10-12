@@ -1026,15 +1026,6 @@ internal sealed class TokenStripForm : Form
         else TextRenderer.DrawText(graphics, "查看费用明细  →", font, bounds, _palette.Accent, TextFlags | TextFormatFlags.HorizontalCenter);
     }
 
-    private static void DrawDatabaseIcon(Graphics graphics, Rectangle bounds, Pen pen)
-    {
-        var height = Math.Max(2, bounds.Height / 3);
-        graphics.DrawEllipse(pen, bounds.X, bounds.Y, bounds.Width, height);
-        graphics.DrawLine(pen, bounds.X, bounds.Y + height / 2, bounds.X, bounds.Bottom - height / 2);
-        graphics.DrawLine(pen, bounds.Right, bounds.Y + height / 2, bounds.Right, bounds.Bottom - height / 2);
-        graphics.DrawArc(pen, bounds.X, bounds.Bottom - height, bounds.Width, height, 0, 180);
-    }
-
     private void DrawCompactMetric(
         Graphics graphics,
         OverlayMetric metric,
@@ -1070,30 +1061,6 @@ internal sealed class TokenStripForm : Form
             valueBounds,
             ValueColorFor(metric),
             TextFlags | TextFormatFlags.Right);
-    }
-
-    private void DrawHighlightedMetric(
-        Graphics graphics,
-        OverlayMetric metric,
-        Rectangle bounds,
-        Font labelFont,
-        Font valueFont)
-    {
-        var labelHeight = Math.Max(1, bounds.Height / 2);
-        TextRenderer.DrawText(
-            graphics,
-            metric.ExpandedLabel,
-            labelFont,
-            new Rectangle(bounds.Left, bounds.Top, bounds.Width, labelHeight),
-            _palette.Label,
-            TextFlags);
-        TextRenderer.DrawText(
-            graphics,
-            metric.Value,
-            valueFont,
-            new Rectangle(bounds.Left, bounds.Top + labelHeight, bounds.Width, bounds.Height - labelHeight),
-            ValueColorFor(metric),
-            TextFlags);
     }
 
     private void DrawExpandedRow(

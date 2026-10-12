@@ -753,9 +753,6 @@ internal static partial class ProbeRunner
         return path;
     }
 
-    private static int ScaleDip(int dip, uint dpi) =>
-        (int)Math.Round(dip * dpi / 96d, MidpointRounding.AwayFromZero);
-
     private static IntPtr GetWindowLongPtr(IntPtr windowHandle, int index) =>
         IntPtr.Size == 8
             ? GetWindowLongPtr64(windowHandle, index)

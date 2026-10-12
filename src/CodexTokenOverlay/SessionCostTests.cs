@@ -93,11 +93,9 @@ internal static class SessionCostTests
         check("explicit full alias binding shares scheme", new SessionCostCalculator().Calculate(Single(model: "other/test").Snapshot(), Prices(alias)).Amounts == r.Amounts);
         check("prefix is retained and never inferred", new SessionCostCalculator().Calculate(Single(model: "test").Snapshot(), Prices(alias)).Amounts is null);
         check("model matching is case sensitive", new SessionCostCalculator().Calculate(Single(model: "Relay/test").Snapshot(), Prices(alias)).Amounts is null);
-        check("compact cost three decimal places", CostFormatting.Money(.06725985m, true) == "$0.067");
-        check("detailed cost three decimal places", CostFormatting.Money(.06725985m) == "$0.067");
-        check("small compact positive not displayed as zero", CostFormatting.Money(.000000001m, true) == "<$0.001");
-        check("small detail positive not displayed as zero", CostFormatting.Money(.000000001m) == "<$0.001");
-        check("actual zero displayed as zero", CostFormatting.Money(0m, true) == "$0.000");
+        check("cost three decimal places", CostFormatting.Money(.06725985m) == "$0.067");
+        check("small positive not displayed as zero", CostFormatting.Money(.000000001m) == "<$0.001");
+        check("actual zero displayed as zero", CostFormatting.Money(0m) == "$0.000");
         using var canceled = new CancellationTokenSource(); canceled.Cancel(); var canceledCorrectly = false;
         try { calculator.Calculate(ledger.Snapshot(), prices, canceled.Token); } catch (OperationCanceledException) { canceledCorrectly = true; }
         check("cost computation honors cancellation", canceledCorrectly);

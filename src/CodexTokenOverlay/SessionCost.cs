@@ -122,12 +122,12 @@ internal sealed class SessionCostCalculator
 }
 internal static class CostFormatting
 {
-    public static string Money(decimal value, bool compact = false)
+    public static string Money(decimal value)
     {
         if (value > 0 && value < 0.001m) return "<$0.001";
         return "$" + value.ToString("0.000", CultureInfo.InvariantCulture);
     }
     public static string Summary(SessionCostResult? result, bool compact) => result?.Amounts is { } a
-        ? result.Label + " " + Money(a.Total, compact) + (result.Status == SessionCostStatus.Partial && !compact ? "（部分记录）" : "")
+        ? result.Label + " " + Money(a.Total) + (result.Status == SessionCostStatus.Partial && !compact ? "（部分记录）" : "")
         : result?.MissingText ?? "正在计算费用";
 }
