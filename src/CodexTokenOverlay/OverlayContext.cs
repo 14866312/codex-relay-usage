@@ -31,6 +31,8 @@ internal sealed class OverlayContext : ApplicationContext
     private readonly ToolStripMenuItem _cancelManualMenuItem;
     private readonly ToolStripMenuItem _resetManualMenuItem;
     private readonly ToolStripMenuItem _traditionalMenuItem;
+    private readonly ToolStripMenuItem _pageDiagnosticsMenuItem;
+    private readonly ToolStripMenuItem _openDiagnosticsMenuItem;
     private readonly Dictionary<AnchorMode, ToolStripMenuItem> _anchorItems = new();
     private readonly Dictionary<DisplayField, ToolStripMenuItem> _fieldItems = new();
     private readonly Dictionary<(CollapsedSlot Slot, DisplayField Field), ToolStripMenuItem>
@@ -45,6 +47,7 @@ internal sealed class OverlayContext : ApplicationContext
     private SessionCostResult? _cost;
     private readonly CodexRuntimeUsageReader _runtimeUsageReader = new();
     private readonly SessionGroupMonitor _groupMonitor;
+    private PageDiagnosticsRecorder? _pageDiagnostics;
     private SessionGroupSnapshot? _group;
     private CancellationTokenSource? _groupCancellation;
     private int _groupInFlight;
@@ -121,6 +124,11 @@ internal sealed class OverlayContext : ApplicationContext
         bindItem.Click += async (_, _) => await BindVisibleSessionAsync();
         var directoryItem = new ToolStripMenuItem("选择 Codex 日志目录…");
         directoryItem.Click += (_, _) => SelectLogDirectory();
+        // Opt-in page-state recording for this run only; never enabled automatically.
+        _pageDiagnosticsMenuItem = new ToolStripMenuItem("记录页面状态（本次运行）") { CheckOnClick = true, Tag = UiGlyph.Data };
+        _pageDiagnosticsMenuItem.Click += (_, _) => TogglePageDiagnostics();
+        _openDiagnosticsMenuItem = new ToolStripMenuItem("打开诊断文件夹") { Tag = UiGlyph.Folder };
+        _openDiagnosticsMenuItem.Click += (_, _) => OpenDiagnosticsFolder();
         var pricesItem = new ToolStripMenuItem("模型价格…");
         pricesItem.Click += (_, _) => EditPrices();
         var costsItem = new ToolStripMenuItem("费用明细…");
@@ -201,7 +209,8 @@ internal sealed class OverlayContext : ApplicationContext
         var dataMenu = new ToolStripMenuItem("会话与数据") { Tag = UiGlyph.Data };
         positionMenu.DropDownItems.AddRange([_adjustManualMenuItem, _saveManualMenuItem, _cancelManualMenuItem, _resetManualMenuItem, _traditionalMenuItem]);
         appearanceMenu.DropDownItems.AddRange([positionMenu, collapsedFieldsMenu, fieldsMenu, themeMenu]);
-        dataMenu.DropDownItems.AddRange([_pinSessionMenuItem, selectItem, bindItem, new ToolStripSeparator(), directoryItem]);
+        dataMenu.DropDownItems.AddRange([_pinSessionMenuItem, selectItem, bindItem, new ToolStripSeparator(), directoryItem,
+            new ToolStripSeparator(), _pageDiagnosticsMenuItem, _openDiagnosticsMenuItem]);
         pricesItem.Tag = UiGlyph.Price; costsItem.Tag = UiGlyph.Cost; collapsedFieldsMenu.Tag = UiGlyph.Rows; fieldsMenu.Tag = UiGlyph.Fields; themeMenu.Tag = UiGlyph.Palette;
         _sessionMenuItem.Tag = UiGlyph.Link; _visibilityMenuItem.Tag = UiGlyph.Hide; startupItem.Tag = UiGlyph.Startup; exitItem.Tag = UiGlyph.Exit;
         _adjustManualMenuItem.Tag = UiGlyph.Position; _resetManualMenuItem.Tag = UiGlyph.Position; directoryItem.Tag = UiGlyph.Folder; bindItem.Tag = UiGlyph.Link;
@@ -472,6 +481,8 @@ internal sealed class OverlayContext : ApplicationContext
         RefreshPresentation();
         UpdateSessionMenuText();
         RefreshTrayText();
+        ObservePageDiagnostics();
+        UpdatePageDiagnosticsMenu();
         if (activeThreadChanged || _queuedRoot is not null || Environment.TickCount64 >= _nextBackgroundPoll)
             RequestBackgroundPoll();
 
@@ -675,6 +686,28 @@ internal sealed class OverlayContext : ApplicationContext
     internal TokenSnapshot? ReadLiveProbeSnapshot() => _lastSnapshot;
     internal SessionGroupSnapshot? ReadGroupProbeSnapshot() => _group;
 
+    // Explicit local probe for the opt-in recorder: start it against an isolated
+    // directory through the same observation path the timer uses, then stop it and
+    // report what was written. Never points at the user's diagnostics folder.
+    internal string? StartPageDiagnosticsProbe(string directory)
+    {
+        _pageDiagnostics?.Dispose();
+        _pageDiagnostics = PageDiagnosticsRecorder.Start(directory, out var error);
+        _pageDiagnosticsMenuItem.Checked = _pageDiagnostics is not null;
+        ObservePageDiagnostics();
+        return error;
+    }
+
+    internal string? StopPageDiagnosticsProbe()
+    {
+        var stopped = _pageDiagnostics;
+        _pageDiagnostics = null;
+        _pageDiagnosticsMenuItem.Checked = false;
+        stopped?.Stop("探针结束");
+        stopped?.Dispose();
+        return stopped?.StopReason;
+    }
+
     // Renders the real command tree with an isolated configuration, never the user's logs.
     internal void RenderTrayPreviews(string directory)
     {
@@ -687,6 +720,8 @@ internal sealed class OverlayContext : ApplicationContext
             SaveMenu(_trayMenu!, Path.Combine(directory, theme.ToString().ToLowerInvariant() + "-tray-menu.png"));
             var appearance = _trayMenu!.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "外观");
             SaveMenu(appearance.DropDown, Path.Combine(directory, theme.ToString().ToLowerInvariant() + "-appearance-menu.png"));
+            var data = _trayMenu!.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "会话与数据");
+            SaveMenu(data.DropDown, Path.Combine(directory, theme.ToString().ToLowerInvariant() + "-data-menu.png"));
         }
     }
     private static void SaveMenu(ToolStripDropDown menu, string path)
@@ -1222,6 +1257,66 @@ internal sealed class OverlayContext : ApplicationContext
     }
     private void SetInlineIssue(string message) { _inlineIssue = message; RefreshPresentation(); }
 
+    // One observation per tick: the recorder itself only writes when the state changes.
+    private void ObservePageDiagnostics()
+    {
+        if (_pageDiagnostics is not { } recorder) return;
+        var route = _pendingRouteStatus;
+        recorder.Observe(new PageDiagnosticsSample(
+            PageDiagnosticsRules.RawKind(route),
+            PageWaitRules.Stage(route, Stopwatch.GetTimestamp()),
+            route.PagePendingSince == 0 ? 0 : Stopwatch.GetElapsedTime(route.PagePendingSince).TotalMilliseconds,
+            route.PageGeneration, _form.Visible, _lastSnapshot is not null));
+    }
+
+    // A recorder that stopped itself (write failure, full queue or the single-file
+    // limit) must not take the statistics down with it; the menu explains the reason.
+    private void UpdatePageDiagnosticsMenu()
+    {
+        if (_pageDiagnostics is not { StopReason: { } reason } stopped) return;
+        _pageDiagnostics = null;
+        stopped.Dispose();
+        _pageDiagnosticsMenuItem.Checked = false;
+        _pageDiagnosticsMenuItem.Text = "页面状态记录已停止（" + reason + "）";
+    }
+
+    private void TogglePageDiagnostics()
+    {
+        if (_pageDiagnosticsMenuItem.Checked)
+        {
+            var recorder = PageDiagnosticsRecorder.Start(PageDiagnosticsRecorder.DefaultDirectory, out var error);
+            if (recorder is null)
+            {
+                _pageDiagnosticsMenuItem.Checked = false;
+                _pageDiagnosticsMenuItem.Text = "页面状态记录无法启动（" + error + "）";
+                return;
+            }
+            _pageDiagnostics = recorder;
+            _pageDiagnosticsMenuItem.Text = "记录页面状态（本次运行）";
+            ObservePageDiagnostics();
+            return;
+        }
+        var stopped = _pageDiagnostics;
+        _pageDiagnostics = null;
+        stopped?.Stop("用户关闭");
+        stopped?.Dispose();
+        _pageDiagnosticsMenuItem.Text = "记录页面状态（本次运行）";
+    }
+
+    private void OpenDiagnosticsFolder()
+    {
+        try
+        {
+            var directory = PageDiagnosticsRecorder.DefaultDirectory;
+            Directory.CreateDirectory(directory);
+            using var process = Process.Start(new ProcessStartInfo { FileName = directory, UseShellExecute = true });
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            SetInlineIssue("无法打开诊断文件夹");
+        }
+    }
+
     private Point CurrentCapsuleCenter()
     {
         var layout = _form.CurrentLayout
@@ -1389,6 +1484,8 @@ internal sealed class OverlayContext : ApplicationContext
             _readCancellation?.Cancel();
             _groupCancellation?.Cancel();
             _runtimeUsageReader.Dispose();
+            _pageDiagnostics?.Dispose();
+            _pageDiagnostics = null;
             _routeMonitor.Dispose();
             _monitor.Dispose();
             DisposeThemeAndForms();

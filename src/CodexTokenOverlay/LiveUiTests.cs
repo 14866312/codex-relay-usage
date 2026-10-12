@@ -82,6 +82,30 @@ internal static class LiveUiTests
             PumpUntil(() => context.ReadGroupProbeSnapshot()?.Members.Any(m => m.ThreadId == "live-sub" && m.TotalTokens == 40) == true));
         check("group publication leaves the main conversation untouched", context.ReadLiveProbeSnapshot() is { TotalTokens: 1430 });
         check("all log-to-publication latency samples collected", times.Count == 12);
+        // The opt-in page-state recorder is wired through the production controller and
+        // stays off until it is started.
+        var diagnostics = Path.Combine(directory, "page-diagnostics");
+        check("the page-state recorder stays off until it is started", !Directory.Exists(diagnostics));
+        var diagnosticsError = context.StartPageDiagnosticsProbe(diagnostics);
+        var diagnosticsFiles = Directory.GetFiles(diagnostics, "*.jsonl");
+        check("the production controller starts one diagnostics file on demand",
+            diagnosticsError is null && diagnosticsFiles.Length == 1);
+        PumpFor(300);
+        var diagnosticsText = ReadShared(diagnosticsFiles[0]);
+        check("the production observation records the page state without identifiers",
+            diagnosticsText.Contains("\"Kind\":\"start\"") && diagnosticsText.Contains("\"Raw\":")
+            && diagnosticsText.Contains("\"Stage\":") && !diagnosticsText.Contains("live", StringComparison.OrdinalIgnoreCase));
+        check("the production controller stops recording on demand",
+            context.StopPageDiagnosticsProbe() == "探针结束" && ReadShared(diagnosticsFiles[0]).Contains("\"Kind\":\"stop\""));
+    }
+
+    // The recorder keeps its file open while running; read it with a share mode that
+    // coexists with the writer.
+    private static string ReadShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     private static void WindowEvents(Action<string, bool> check, List<double> times)

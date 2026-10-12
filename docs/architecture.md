@@ -15,6 +15,7 @@
 | 会话识别 | CodexVisibleThreadMonitor、CodexDebugRouteReader、CodexSidebarAccessibility、SidebarSessionResolver、ManualAttachment | 主文档／路由／侧栏／标题识别与手动绑定 |
 | 日志与用量 | TokenLogMonitor、LiveTokenUsage、UsageLedger、TokenSnapshot | 会话发现、增量读取、用量视图与账本 |
 | 关联用量 | RelatedSessionCatalog、SessionGroupMonitor、SessionGroupUsage、CodexRuntimeUsageReader | 显式关系归属、成员分片读取、侧聊运行时投影、分组快照 |
+| 页面等待与诊断 | PageWaitRules、PageDiagnosticsRecorder | 等待阶段分档、短空窗绑定候选、可选的本机页面状态记录 |
 | 费用与价格 | SessionCost、PricingSettings、ModelPriceForm、CostDetailsForm | 计价、重算、价格编辑与费用明细（含“关联用量”页） |
 | 展示与交互 | TokenStripForm、OverlayPresentation、ModernControls、WindowsTheme、SessionPickerForm | 悬浮条渲染、反馈动画、主题与对话框 |
 | 验证设施 | SyntheticSelfTests、各 `*Tests.cs`、ProbeRunner、DiagnosticsRunner | 合成自检、UI／窗口探针、只读诊断 |
@@ -22,6 +23,8 @@
 ## 识别链路
 
 主文档（MSAA/IA2）→ 本地路由（app:// 主页面，/local/<会话 ID>，经本地调试连接读取）→ 侧栏元数据与本地项目索引（区分跨项目同名）→ 手动绑定（兜底）。识别结果由窗口、进程、文档与导航 key 组成“代次”校验；切换、超时或条目重建会取消迟到结果（见 [ADR-0002](adr/0002-identify-by-document-and-route.md)）。IPC 订阅只用于诊断，不参与生产识别。
+
+待就绪等待属于这条链路：主文档出现但尚未填充 URL 时身份立即失效（数字清空、迟到结果取消），文案按单调时钟分档——不足 3 秒“正在读取当前对话…”，3 秒后“当前页面尚未就绪”，60 秒后“等待较久，可尝试重启 Codex”；等待起点绑定窗口生命周期（句柄、进程与进程启动时间），窗口重建、日志目录或错误类型变化时重新计时。待就绪期间保留上一条侧栏绑定作为临时候选，页面恢复后重新核对文档、侧栏条目、标题与项目归属，全部一致才恢复绑定，超时（3 秒）或不一致即丢弃。提示阶段只属于展示缓存，不递增会话选择代次。
 
 ## 用量链路
 
