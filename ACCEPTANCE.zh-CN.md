@@ -1,6 +1,21 @@
 # 交付验证记录
 
-版本 1.3.10，Windows x64，2026-10-12。以下区分本次检查、历史版本记录，以及待实际操作的场景。
+版本 1.3.12，Windows x64，2026-10-12。以下区分本次检查、历史版本记录，以及待实际操作的场景。
+
+## 1.3.12 上下文用量完整块与可用窗口的目录回退
+
+本地日志里的 `model_context_window` 只覆盖一部分中转模型：缺失或记录为零时，悬浮条此前显示“未知上限”，占比与剩余都不可用，也无从知道占比除以的是哪个上限。本轮补全上下文块，并在日志没有窗口时按完整模型 ID 从当前数据根的模型目录推导；同时按 2026-10-12 的核实结论修正口径——日志窗口已经是有效窗口（1M 目录模型实测报告 950,000），不应对它再乘一次 95%。
+
+- 变更点：新增 ContextWindowCatalog（目录解析、纯函数解析器与内置映射，含核验日期）；TokenSnapshot 增加 ConfiguredWindowTokens／ContextWindowSource／ConfiguredWindowSource／ConfiguredWindowReference 与 RemainingContextTokens；TokenLogMonitor 在 `turn_context` 换模型时清空旧读数与窗口、Poll 出口做窗口投影、新增 `models_cache.json` 单文件观察者、SetRoot 重建目录缓存；OverlayPresentation 新增“已用 / 可用窗口”“模型配置窗口（目录／内置映射／目录参考）”“剩余可用（估算）”“模型”与块内“异常”行，token 紧凑格式改大写 K/M 并在进位后显示 1M，占比保留一位小数；OverlayContext、TokenStripForm、OverlayLayout 与设置版本未改。
+- 口径：可用窗口＝日志 `model_context_window`（大于零时直接采用）；否则目录按完整 slug 精确匹配（`context_window` 优先、缺失用 `max_context_window`）乘 `effective_context_window_percent`（缺失按 95%）向下取整；目录缺失或目录行不可用时回退内置映射（核验 2026-10-12，含中转前缀条目）；都没有则显示“未知上限”，占比与剩余显示 —，已用量照常显示。目录推导值与日志不一致时配置窗口标“（目录参考）”，计算仍用日志值；`auto_compact_token_limit` 不当作窗口。
+- 三段对照：基线提交 5c12bfa 自检 557 项零失败；修改后工作树 604 项零失败（新增 47 项：目录解析与优先级、95% 预留与非法比例、1M 与 272K、目录参考、未知上限、超限、压缩后读数下降、模型切换清空、只有目录变化时的刷新、数据根切换、字段去重与唯一进度条、异常行归属、24 dip 行高下限与放不下时折叠、格式边界与展示探针字段）。实时探针由 73 项增至 75 项（生产控制器按目录解析窗口、只有 `models_cache.json` 变化时也刷新）；工具栏交互由 67 项增至 69 项（浅深色上下文块渲染核对行高与面板容纳全部行）。
+- 完整发布验证：604 项合成、20 项原生窗口、36 项费用窗口、69 项工具栏交互、8 项剪贴板恢复、1 项移除通知、75 项实时更新及跟随、33 项启动设置、2 项无控制台检查，共 848 项零失败；x64 GUI PE，构建零警告零错误。
+- 发布过程记录：首次发布在剪贴板探针处连续三次命中全局剪贴板竞争（“所请求的剪贴板操作失败”，重跑即通过），按失败即停中止；中止后的包目录残留让增量 `dotnet publish` 跳过 EXE 旁 `scripts/` 的复制，删除残留目录后全新发布通过（Verify 的启动检查会拦下这类残缺包）。已把“重新发布先删除包目录”写入验证流程文档。
+- 回滚：在临时工作树对 a0acfb1 执行 revert，20 个条目干净应用、无冲突；回滚树与基线 5c12bfa 逐字节一致（`git diff` 为空）、构建零警告零错误、自检回到 557 项零失败；本机 1.3.10 包保留，把两个快捷方式指回即可回退。
+- 文档：CHANGELOG 1.3.12；README.zh-CN 数字口径新增“可用窗口”“模型配置窗口”行；CONTEXT 新增可用窗口／配置窗口／目录参考词条并修订上下文占用；architecture 模块表加入窗口解析；codex-integration 新增“模型目录（models_cache.json）”小节；cost-and-speed 修订上下文口径；verification 记录新检查与发布注意事项；预览由发布流程重新生成（expanded／cost／overview 与 toolbar-context）。
+- 提交与发布：改动提交为 a0acfb1（feat），同批交付 5c12bfa（chore：清理已删除架构图的引用）；本轮只做本机发布与部署，未推送远端（本地领先 11 个提交）、未打标签、未创建 GitHub Release；1.3.11 未单独部署，其改动随本包一并交付。
+- 发布产物：包内 CodexRelayUsage.exe 的 ProductVersion 为 1.3.12+a0acfb1f9abef113803a437ab42d85509f6a5c68，EXE SHA256 = 8e4dcff2…（49,915,362 字节）；独立版 ZIP SHA256 = d4b969a5…（46,786,225 字节），源码 ZIP SHA256 = c4316845…（2,642,135 字节）。
+- 本机部署：桌面“Codex 用量助手.lnk”（描述更新为 1.3.12）与登录“Codex 用量自动启动.lnk”均指向 1.3.12 包，运行实例已由新包启动（旧 1.3.10 实例已退出），重复启动立即退出；scripts/Test-LoginStartup.ps1 的 9 项登录入口检查通过（未重启 Codex）；旧 1.3.10 包保留作回退，部署记录见本机 artifacts，未上传。
 
 ## 1.3.10 等待提示分档、短空窗绑定恢复与可选页面状态诊断
 

@@ -11,13 +11,14 @@ dotnet publish .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release -r wi
 - `dotnet publish` 通过 csproj 的发布项把 `Install-CodexStartup.ps1` 与 `Install-Startup-Package.vbs` 复制到发布目录的 `scripts/`，因此上面的 publish → Verify 命令可直接运行。
 - 完整发布走 `\scripts\Publish-Local.ps1 -DotnetPath dotnet`：自包含 x64 EXE、独立 ZIP、源码 ZIP、SHA256 与预览图。
 - `Publish-Local.ps1` 的预览步骤包含实时探针：生成 `previews/cost-related-live.png`（浅色／深色），即修复后明细窗口跟随成员追加的验证截图。
+- 重新发布同一版本前先删除已有的 `artifacts\CodexRelayUsage-<版本>-win-x64` 目录：中断过的发布留下的目录会让增量 `dotnet publish` 跳过 EXE 旁 `scripts/` 的复制，Verify 的启动检查会因此失败；全新目录发布正常。
 - SDK 由 global.json 指定（已验证 10.0.401）；源码包包含 AGENTS.md、CONTEXT.md、docs 知识库 Markdown 与 .github/workflows，排除 bin/obj、SDK、用户设置与真实日志。
 
 ## 本机部署（开发机快捷方式）
 
 本机的悬浮条由两个快捷方式启动，二者都直接指向本机发布目录里的可执行文件，不是系统安装：桌面 `Codex 用量助手.lnk`（手动入口），以及登录启动项 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Codex 用量自动启动.lnk`（由发布目录的 `scripts\Install-CodexStartup.ps1` 写入，托盘“开机启动”调用的也是它）。
 
-升级步骤：`Publish-Local.ps1` 产出 `artifacts\CodexRelayUsage-<版本>-win-x64\` → 把桌面快捷方式指向新目录的 `CodexRelayUsage.exe` → 运行新目录的 `scripts\Install-CodexStartup.ps1`，由它刷新登录启动项并启动新版；旧目录保留，回滚时把两个入口指回去即可。2026-10-12 已按此把两个入口从 1.3.7 切到 1.3.8。日常启动请走快捷方式或双击 EXE（`explorer.exe CodexRelayUsage.exe` 等价）；不要从其它进程里以子进程方式启动悬浮条——它会随启动它的进程所在的作业一起退出，2026-10-12 实测脚本启动的实例在 Codex 重启时一并消失。
+升级步骤：`Publish-Local.ps1` 产出 `artifacts\CodexRelayUsage-<版本>-win-x64\` → 把桌面快捷方式指向新目录的 `CodexRelayUsage.exe` → 运行新目录的 `scripts\Install-CodexStartup.ps1`，由它刷新登录启动项并启动新版；旧目录保留，回滚时把两个入口指回去即可。2026-10-12 已按此多次更新（从 1.3.7 起步，最近一次从 1.3.10 切到 1.3.12）。日常启动请走快捷方式或双击 EXE（`explorer.exe CodexRelayUsage.exe` 等价）；不要从其它进程里以子进程方式启动悬浮条——它会随启动它的进程所在的作业一起退出，2026-10-12 实测脚本启动的实例在 Codex 重启时一并消失。
 
 ## 验证要求
 
