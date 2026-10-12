@@ -124,6 +124,41 @@ internal static class FeedbackUiTests
                 Check(theme + " panel close button collapses exactly once", clicks == 3 && form.CurrentLayout!.State == OverlayVisualState.Collapsed);
                 form.Hide();
             }
+            // The context block adds four rows; both themes must still render the panel, and
+            // the preview directory keeps the screenshot as the visual evidence.
+            foreach (var theme in new[] { OverlayThemeKind.Light, OverlayThemeKind.Dark })
+            {
+                using var contextForm = new TokenStripForm(motionEnabled: false);
+                var contextPresentation = OverlayPresentationBuilder.Create(ContextExample(), DisplayField.Total, DisplayField.CacheHitRate,
+                    OverlaySettings.CreateDefault().VisibleFields) with { FollowText = "自动跟随" };
+                contextForm.SetPresentation(contextPresentation); contextForm.ApplyTheme(OverlayThemePalette.For(theme));
+                var contextHost = TitleBarPlacementTests.Host((uint)contextForm.DeviceDpi);
+                var contextLayout = OverlayLayoutCalculator.Calculate(new(contextHost, AnchorMode.TitleBarTopRight, true,
+                    contextPresentation.ExpandedRows.Count, true));
+                contextForm.ApplyLayout(contextLayout with
+                {
+                    WindowBounds = contextLayout.WindowBounds with
+                        { X = -30_000 - contextLayout.CapsuleBounds.X, Y = -30_000 - contextLayout.CapsuleBounds.Y }
+                });
+                contextForm.Show(); contextForm.FinishFeedbackAnimation(); Application.DoEvents();
+                var panel = contextForm.CurrentLayout!.PanelBounds;
+                using var contextFrame = Capture(contextForm);
+                var colors = new HashSet<int>();
+                for (var y = panel.Top + 6; y < panel.Bottom - 6; y += 3)
+                for (var x = panel.Left + 6; x < panel.Right - 6; x += 3)
+                {
+                    var pixel = contextFrame.GetPixel(x, y);
+                    if (pixel.A > 0) colors.Add(pixel.ToArgb());
+                }
+                Check(theme + " context block renders labels, values and the bar",
+                    contextForm.CurrentLayout.State == OverlayVisualState.Expanded
+                    && contextForm.CurrentLayout.ExpandedRowHeight >= 24
+                    && panel.Height >= contextForm.CurrentLayout.ExpandedRowHeight * contextPresentation.ExpandedRows.Count
+                    && colors.Count >= 3);
+                if (previewDirectory is not null)
+                    Save(contextForm, Path.Combine(previewDirectory, theme.ToString().ToLowerInvariant() + "-toolbar-context.png"));
+                contextForm.Hide();
+            }
             using var reduced = new TokenStripForm(motionEnabled: false);
             var reducedPresentation = OverlayPresentationBuilder.Create(DiagnosticsRunner.Example(), DisplayField.Total, DisplayField.CacheHitRate, OverlaySettings.CreateDefault().VisibleFields);
             reduced.SetPresentation(reducedPresentation);
@@ -148,6 +183,13 @@ internal static class FeedbackUiTests
         catch (Exception ex) { checks.Add(new("unhandled feedback UI exception", false, ex.ToString())); }
         return new(checks.Count(c => c.Passed), checks.Count(c => !c.Passed), checks);
     }
+
+    private static TokenSnapshot ContextExample() => DiagnosticsRunner.Example() with
+    {
+        Model = "cn/deepseek-v4.1-flash", ContextUsedTokens = 335_412, ContextWindowTokens = 950_000,
+        ConfiguredWindowTokens = 1_000_000, ConfiguredWindowSource = ContextWindowRules.CatalogSource,
+        ContextWindowSource = ContextWindowRules.LogSource
+    };
 
     private static void PumpUntilIdle(TokenStripForm form)
     {

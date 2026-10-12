@@ -10,7 +10,9 @@ internal sealed record TokenSnapshot(
     bool UsageRecorded = true, bool TotalTokenInvalid = false, UsageLedgerSnapshot? Ledger = null,
     bool TurnInProgress = false, string? UsageSource = null, double? OutputSpeed = null,
     bool SpeedGenerationOnly = false, double? GenerationSeconds = null, double? ToolSeconds = null,
-    bool MoreDataPending = false)
+    bool MoreDataPending = false,
+    long? ConfiguredWindowTokens = null, string? ContextWindowSource = null,
+    string? ConfiguredWindowSource = null, bool ConfiguredWindowReference = false)
 {
     public static bool Valid(long? value) => value is >= 0;
     public bool CacheIsValid => Valid(InputTokens) && Valid(CachedInputTokens) && CachedInputTokens <= InputTokens;
@@ -24,6 +26,10 @@ internal sealed record TokenSnapshot(
         ? CachedInputTokens * 100d / InputTokens : null;
     public double? ContextPercent => Valid(ContextUsedTokens) && ContextWindowTokens > 0
         ? ContextUsedTokens * 100d / ContextWindowTokens : null;
+    // Ceiling left on the latest call estimate, clamped at zero when the estimate
+    // already exceeds the available window.
+    public long? RemainingContextTokens => ContextUsedTokens is { } used && ContextWindowTokens is { } window
+        && Valid(used) && Valid(window) && window > 0 ? Math.Max(0, window - used) : null;
     public string? Issue
     {
         get

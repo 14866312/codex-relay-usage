@@ -29,6 +29,7 @@ internal static class OverlayPresentationBuilder
                 ("缓存写入费用", cost.Amounts?.CacheWrite), ("输出费用", cost.Amounts?.Output) })
                 rows.Add(new(DisplayField.Cost, item.Item1, item.Item1, item.Item2.HasValue ? CostFormatting.Money(item.Item2.Value) : "— / 未计价", item.Item2.HasValue));
         }
+        AddContextRows(rows, snapshot, visibleFields);
         return new(Metric(snapshot, primaryField, true, cost), Metric(snapshot, secondaryField, true, cost),
             rows, context ?? 0,
             (visibleFields & DisplayField.ContextPercent) != 0 && context.HasValue,
@@ -62,7 +63,7 @@ internal static class OverlayPresentationBuilder
             DisplayField.CacheMiss => s.CachedInputTokens > s.InputTokens || s.InputTokens < 0 || s.CachedInputTokens < 0 ? "异常" : Number(s.UncachedInputTokens),
             DisplayField.CacheHitRate => s.CachedInputTokens > s.InputTokens || s.InputTokens < 0 || s.CachedInputTokens < 0 ? "异常" : Rate(s.CacheHitPercent),
             DisplayField.Reasoning => Number(s.ReasoningOutputTokens, s.ReasoningIsValid),
-            DisplayField.Context => Number(s.ContextUsedTokens) + " / " + Number(s.ContextWindowTokens),
+            DisplayField.Context => ContextAmounts(s, compact),
             DisplayField.ContextPercent => Percent(s.ContextPercent),
             DisplayField.Thread => ShortThreadId(s.ThreadId),
             DisplayField.Cost => CostFormatting.Summary(cost, compact),
@@ -78,16 +79,61 @@ internal static class OverlayPresentationBuilder
         };
         return new(field, labels.Compact, labels.Full, value, hasValue);
     }
-    public static string Percent(double? percent) => percent.HasValue ? percent.Value.ToString("0", Invariant) + "%" : "—";
-    // The cache rate keeps hundredths; the other percentages stay whole.
+    public static string Percent(double? percent) => percent.HasValue ? percent.Value.ToString("0.#", Invariant) + "%" : "—";
+    // The cache rate keeps hundredths; the other percentages keep up to one decimal.
     public static string Rate(double? percent) => percent.HasValue ? percent.Value.ToString("0.00", Invariant) + "%" : "—";
     public static string FormatTokenCount(long? value) => value switch
     {
         null => "—",
         >= 1_000_000 => (value.Value / 1_000_000d).ToString("0.#", Invariant) + "M",
-        >= 1_000 => (value.Value / 1_000d).ToString("0.#", Invariant) + "k",
+        // Rounding at one decimal can promote a sub-million count onto 1000K; the
+        // promoted value moves to the next unit instead of printing “1000K”.
+        >= 1_000 when Math.Round(value.Value / 1_000d, 1) >= 1_000d => (value.Value / 1_000_000d).ToString("0.#", Invariant) + "M",
+        >= 1_000 => (value.Value / 1_000d).ToString("0.#", Invariant) + "K",
         _ => value.Value.ToString("N0", Invariant)
     };
+    // The context block repeats no fact: with both fields on, the 最近调用 / 窗口 row already
+    // carries used over window, so only the amount, directory, remaining, model and anomaly
+    // rows are added; with only 上下文占用 on, the block supplies the amounts itself.
+    private static void AddContextRows(List<OverlayMetric> rows, TokenSnapshot snapshot, DisplayField fields)
+    {
+        var showsContext = (fields & DisplayField.Context) != 0;
+        var showsPercent = (fields & DisplayField.ContextPercent) != 0;
+        if (!showsContext && !showsPercent) return;
+        var insertAt = rows.FindLastIndex(row => row.Field is DisplayField.Context or DisplayField.ContextPercent) + 1;
+        var block = new List<OverlayMetric>();
+        if (showsPercent && !showsContext)
+            block.Add(new(DisplayField.None, "已用 / 可用", "已用 / 可用窗口", ContextAmounts(snapshot, compact: false),
+                TokenSnapshot.Valid(snapshot.ContextUsedTokens) && snapshot.ContextWindowTokens is > 0));
+        block.Add(ConfiguredWindowMetric(snapshot));
+        block.Add(new(DisplayField.None, "剩余可用", "剩余可用（估算）",
+            snapshot.RemainingContextTokens is { } remaining ? remaining.ToString("N0", Invariant) + " tok" : "—",
+            snapshot.RemainingContextTokens.HasValue));
+        block.Add(new(DisplayField.None, "模型", "模型", Clean(snapshot.Model ?? "— / 未提供"),
+            !string.IsNullOrWhiteSpace(snapshot.Model)));
+        if (snapshot.Issue is { } issue) block.Add(new(DisplayField.None, "异常", "异常", issue, true));
+        rows.InsertRange(insertAt, block);
+    }
+    private static OverlayMetric ConfiguredWindowMetric(TokenSnapshot snapshot)
+    {
+        // The directory answers only for an exact slug; a log window with no directory row
+        // keeps the ceiling unknown here instead of inventing one.
+        var suffix = snapshot.ConfiguredWindowSource is { } source
+            ? "（" + source + (snapshot.ConfiguredWindowReference ? "参考" : "") + "）" : "";
+        var label = "模型配置窗口" + suffix;
+        return snapshot.ConfiguredWindowTokens is { } window
+            ? new(DisplayField.None, label, label, window.ToString("N0", Invariant) + " tok", true)
+            : new(DisplayField.None, label, label, "— / 未知上限", false);
+    }
+    // One unit closes the pair instead of repeating “tok” after each side.
+    private static string ContextAmounts(TokenSnapshot snapshot, bool compact)
+    {
+        var used = ContextPart(snapshot.ContextUsedTokens, compact);
+        var window = ContextPart(snapshot.ContextWindowTokens, compact);
+        return window is "—" or "异常" ? used + " / " + window : used + " / " + window + " tok";
+    }
+    private static string ContextPart(long? value, bool compact) =>
+        value is null ? "—" : !TokenSnapshot.Valid(value) ? "异常" : compact ? FormatTokenCount(value) : value.Value.ToString("N0", Invariant);
     public static string CompactText(OverlayMetric m) => m.Field == DisplayField.Total ? m.Value + " tok" :
         m.Field == DisplayField.Cost ? m.Value : m.CompactLabel + " " + m.Value;
     public static string ShortThreadId(string id, int maximumLength = 12)

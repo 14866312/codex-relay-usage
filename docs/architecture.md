@@ -13,7 +13,7 @@
 | 入口与宿主 | Program、StartupHost、OverlayContext | 参数路由、单实例、设置与价格加载、主控制器 |
 | 窗口定位与跟随 | CodexWindowLocator、NativeWindowEvents、OverlayLayout | 找到主窗口、原生事件驱动跟随、DPI 与吸附布局 |
 | 会话识别 | CodexVisibleThreadMonitor、CodexDebugRouteReader、CodexSidebarAccessibility、SidebarSessionResolver、ManualAttachment | 主文档／路由／侧栏／标题识别与手动绑定 |
-| 日志与用量 | TokenLogMonitor、LiveTokenUsage、UsageLedger、TokenSnapshot | 会话发现、增量读取、用量视图与账本 |
+| 日志与用量 | TokenLogMonitor、LiveTokenUsage、UsageLedger、TokenSnapshot、ContextWindowCatalog | 会话发现、增量读取、用量视图与账本、可用窗口的来源解析（日志／模型目录／内置映射） |
 | 关联用量 | RelatedSessionCatalog、SessionGroupMonitor、SessionGroupUsage、CodexRuntimeUsageReader | 显式关系归属、成员分片读取、侧聊运行时投影、分组快照 |
 | 页面等待与诊断 | PageWaitRules、PageDiagnosticsRecorder | 等待阶段分档、短空窗绑定候选、可选的本机页面状态记录 |
 | 费用与价格 | SessionCost、PricingSettings、ModelPriceForm、CostDetailsForm | 计价、重算、价格编辑与费用明细（含“关联用量”页） |

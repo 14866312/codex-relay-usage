@@ -11,6 +11,13 @@
 - 日志不包含逐个生成 token 的计数；单次调用在报告到达前没有准确用量，工具不猜测。
 - 准确性边界：中转站可能漏报或改写 usage，Codex 也可能把缺失值归一化为零；日志不能还原上游真实值，统计不能直接作为账单。
 
+## 模型目录（models_cache.json）
+
+- 数据根（默认为 `%USERPROFILE%\.codex`，即 `sessions` 的父目录；`CODEX_HOME` 或 `--sessions` 覆盖时随之变化）存放 Codex 的模型目录 `models_cache.json`，条目字段含 `slug`、`context_window`、`max_context_window`、`effective_context_window_percent` 与 `auto_compact_token_limit`（实测 2026-10-12，约 691 KB）。
+- 工具只按完整 slug 精确匹配，保留中转前缀、不做别名与模糊匹配；`context_window` 与 `max_context_window` 可以不同（本机 `codex-auto-review` 为 272,000／872,000），工具优先 `context_window`。`auto_compact_token_limit`（272,000×90% = 244,800）是自动压缩阈值，不是上下文窗口。
+- 本机会话日志实测：目录 1M 的模型报告 `model_context_window` = 950,000（已含 95% 预留），272K 报 258,400，128K 报 121,600，另见 996,147（1,048,576×95%）。日志值已经是有效窗口，工具不会对它再乘一次 95%；`effective_context_window_percent` 只用于目录回退推导。
+- 工具只读取该文件，从不写入；它变化时（即使日志没有追加）也会重新解析并发布，切换数据根会重建目录缓存。Codex 更新这些字段后需重新核实。
+
 ## 页面路由与本地调试连接
 
 - Codex 以本地调试端口打开时，端口由系统分配；工具只发现“已确认主窗口进程拥有的 IPv4 回环监听”，只连接唯一的 app://-/index.html 主页面。

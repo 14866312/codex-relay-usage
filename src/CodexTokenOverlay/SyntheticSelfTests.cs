@@ -233,7 +233,7 @@ internal static class SyntheticSelfTests
             Append(copy, Usage(new { input_tokens = 1, output_tokens = 2, total_tokens = 1.5 })); s = monitor.Poll("a", true)!;
             Check("fractional reported total flagged", s.TotalTokenInvalid && s.EffectiveTotalTokens is null && s.Issue is not null);
             Append(copy, Usage(new { input_tokens = 1, output_tokens = 2 }, new { total_tokens = 100 }, 0)); s = monitor.Poll("a", true)!;
-            Check("zero context window is undefined and flagged", s.ContextPercent is null && s.Issue is not null);
+            Check("zero log window falls back instead of dividing", s.ContextPercent is null && s.ContextWindowTokens is null);
             Append(copy, Usage(new { input_tokens = 1, output_tokens = 2 }, new { total_tokens = 100 }, 50)); s = monitor.Poll("a", true)!;
             Check("context above window reported as abnormal", s.ContextPercent == 200 && s.Issue is not null);
             var route = new ActiveThreadRouteStatus("a", 1, true, 1, null);
@@ -258,6 +258,7 @@ internal static class SyntheticSelfTests
             SessionCostTests.Run(Check, directory);
             LiveUsageTests.Run(Check, directory);
             RelatedUsageTests.Run(Check, directory);
+            ContextWindowTests.Run(Check, directory);
             foreach (var dpi in new uint[] { 96, 120, 144, 192 })
             foreach (var scale in new[] { 60, 100, 130 })
             {

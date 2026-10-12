@@ -12,6 +12,9 @@ internal sealed class TokenLogMonitor : IDisposable
     private readonly List<FileSystemWatcher> _watchers = [];
     private Dictionary<string, SessionEntry> _catalog = new(StringComparer.OrdinalIgnoreCase);
     private string _root;
+    private ContextWindowCatalog _windowCatalog;
+    private FileSystemWatcher? _catalogWatcher;
+    private string? _catalogWatcherPath;
     internal const int ReaderCacheCapacity = 8;
     // Related members keep their own readers so a group larger than the selection cache
     // never restarts from byte zero; the group monitor releases members it dropped and
@@ -35,6 +38,7 @@ internal sealed class TokenLogMonitor : IDisposable
     public TokenLogMonitor(string? sessionRoot = null)
     {
         _root = NormalizeRoot(sessionRoot ?? SessionPathResolver.Resolve());
+        _windowCatalog = new ContextWindowCatalog(_root);
         _titles.SetRoot(_root);
         CreateWatchers();
     }
@@ -56,7 +60,9 @@ internal sealed class TokenLogMonitor : IDisposable
             var normalized = NormalizeRoot(root);
             if (string.Equals(_root, normalized, StringComparison.OrdinalIgnoreCase)) return;
             _root = normalized;
+            _windowCatalog = new ContextWindowCatalog(normalized);
             _titles.SetRoot(normalized);
+            DisposeCatalogWatcher();
             foreach (var watcher in _watchers) watcher.Dispose();
             foreach (var cached in _readers.Values) cached.Dispose();
             foreach (var cached in _memberReaders.Values) cached.Dispose();
@@ -103,6 +109,40 @@ internal sealed class TokenLogMonitor : IDisposable
                 DiagnosticsSink.Record("watcher:" + root, e);
             }
         }
+        CreateCatalogWatcher();
+    }
+
+    // models_cache.json can change the directory-derived window without any log append;
+    // this watcher republishes at once while the one-second scan stays the compensation
+    // path, exactly like log notifications.
+    private void CreateCatalogWatcher()
+    {
+        var path = _windowCatalog.Path;
+        if (_catalogWatcher is not null && string.Equals(_catalogWatcherPath, path, StringComparison.OrdinalIgnoreCase)) return;
+        DisposeCatalogWatcher();
+        if (path is null) return;
+        var directory = Path.GetDirectoryName(path);
+        if (directory is null || !Directory.Exists(directory)) return;
+        try
+        {
+            var watcher = new FileSystemWatcher(directory, Path.GetFileName(path))
+                { NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size };
+            watcher.Changed += (_, _) => DataChanged?.Invoke();
+            watcher.Created += (_, _) => DataChanged?.Invoke();
+            watcher.Deleted += (_, _) => DataChanged?.Invoke();
+            watcher.Renamed += (_, _) => DataChanged?.Invoke();
+            watcher.Error += (_, _) => DataChanged?.Invoke();
+            watcher.EnableRaisingEvents = true;
+            _catalogWatcher = watcher; _catalogWatcherPath = path;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            DiagnosticsSink.Record("catalog-watcher:" + path, e);
+        }
+    }
+    private void DisposeCatalogWatcher()
+    {
+        _catalogWatcher?.Dispose(); _catalogWatcher = null; _catalogWatcherPath = null;
     }
     private void NotifyCatalogChange()
     {
@@ -184,10 +224,31 @@ internal sealed class TokenLogMonitor : IDisposable
                 _readerOrder.RemoveFirst();
                 evicted?.Dispose();
             }
-            try { var snapshot = reader.Read(cancellationToken: cancellationToken); LastError = null; return snapshot; }
+            try { var snapshot = reader.Read(cancellationToken: cancellationToken); LastError = null; return ProjectContextWindow(snapshot); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            { LastError = "会话日志暂时无法读取"; return reader.Snapshot; }
+            { LastError = "会话日志暂时无法读取"; return ProjectContextWindow(reader.Snapshot); }
         }
+    }
+    // The reader reports the raw log window; the projection adds the directory window and
+    // its provenance without writing back into the reader, so the next poll still starts
+    // from the unprojected log value.
+    private TokenSnapshot? ProjectContextWindow(TokenSnapshot? snapshot)
+    {
+        if (snapshot is null) return null;
+        var resolution = _windowCatalog.Resolve(snapshot.Model, snapshot.ContextWindowTokens);
+        if (resolution.EffectiveWindow == snapshot.ContextWindowTokens
+            && resolution.EffectiveSource == snapshot.ContextWindowSource
+            && resolution.ConfiguredWindow == snapshot.ConfiguredWindowTokens
+            && resolution.ConfiguredSource == snapshot.ConfiguredWindowSource
+            && resolution.ConfiguredReference == snapshot.ConfiguredWindowReference) return snapshot;
+        return snapshot with
+        {
+            ContextWindowTokens = resolution.EffectiveWindow,
+            ContextWindowSource = resolution.EffectiveSource,
+            ConfiguredWindowTokens = resolution.ConfiguredWindow,
+            ConfiguredWindowSource = resolution.ConfiguredSource,
+            ConfiguredWindowReference = resolution.ConfiguredReference
+        };
     }
     internal long? ReaderBytesRead(string threadId)
     { lock (_sync) return _readers.TryGetValue(threadId, out var reader) ? reader.TotalBytesRead : null; }
@@ -236,6 +297,7 @@ internal sealed class TokenLogMonitor : IDisposable
         lock (_sync)
         {
             _disposed = true;
+            DisposeCatalogWatcher();
             foreach (var watcher in _watchers) watcher.Dispose();
             foreach (var cached in _readers.Values) cached.Dispose();
             foreach (var cached in _memberReaders.Values) cached.Dispose();
@@ -355,7 +417,19 @@ internal sealed class IncrementalSessionReader(string path, string threadId) : I
             var root = doc.RootElement;
             if (!root.TryGetProperty("payload", out var payload) || payload.ValueKind != JsonValueKind.Object) return;
             var type = String(root, "type");
-            if (type == "turn_context") { _ledger.ObserveContext(payload); _model = String(payload, "model") ?? _model; return; }
+            if (type == "turn_context")
+            {
+                _ledger.ObserveContext(payload);
+                if (String(payload, "model") is { } model)
+                {
+                    // A reading belongs to the model that produced it: a switch drops the
+                    // old estimate and window, while totals and the ledger stay untouched.
+                    if (_model is not null && !string.Equals(model, _model, StringComparison.Ordinal))
+                    { _contextUsed = null; _contextWindow = null; }
+                    _model = model;
+                }
+                return;
+            }
             if (type == "token_usage_record")
             {
                 // Speed is a per-turn measurement, not a ledger entry: relays that omit

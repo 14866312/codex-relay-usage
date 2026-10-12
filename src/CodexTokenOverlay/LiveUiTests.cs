@@ -33,12 +33,20 @@ internal static class LiveUiTests
         var home = Path.Combine(directory, "home"); var sessions = Path.Combine(home, "sessions"); Directory.CreateDirectory(sessions);
         var path = Path.Combine(sessions, "live.jsonl"); var utf8 = new UTF8Encoding(false);
         File.WriteAllText(path, LiveUsageTests.Meta + LiveUsageTests.Started + LiveUsageTests.Context, utf8);
+        WriteCatalog(home, 1_000_000);
         var settingsPath = Path.Combine(directory, "settings.json");
         var settings = OverlaySettings.CreateDefault(); settings.PinnedThreadId = "live"; settings.Save(settingsPath);
         using var context = new OverlayContext(home, settingsPath, useSavedRoot: false);
         context.StartNotificationsOnlyProbe();
         check("production controller reads initial synthetic turn", PumpUntil(() => context.ReadLiveProbeSnapshot() is not null));
         check("ongoing empty turn has no invented count", context.ReadLiveProbeSnapshot() is { TurnInProgress: true, UsageRecorded: false });
+        // The window comes from the model directory next to the sessions root; rewriting the
+        // directory alone must republish through the production controller without a log append.
+        check("production controller resolves the window from the model directory",
+            PumpUntil(() => context.ReadLiveProbeSnapshot() is { ContextWindowTokens: 950_000, ContextWindowSource: "目录" }));
+        WriteCatalog(home, 128_000);
+        check("directory-only change republishes without a log append",
+            PumpUntil(() => context.ReadLiveProbeSnapshot() is { ContextWindowTokens: 121_600 }));
         for (var i = 1; i <= 12; i++)
         {
             var u = new UsageAmounts(100, 40, 0, 10, 5, 110);
@@ -122,6 +130,13 @@ internal static class LiveUiTests
         check("the production controller stops recording on demand",
             context.StopPageDiagnosticsProbe() == "探针结束" && ReadShared(diagnosticsFiles[0]).Contains("\"Kind\":\"stop\""));
     }
+
+    private static void WriteCatalog(string home, long window) =>
+        File.WriteAllText(Path.Combine(home, "models_cache.json"), JsonSerializer.Serialize(new
+        {
+            fetched_at = "2026-10-12T00:00:00Z",
+            models = new[] { new { slug = "relay/test", context_window = window, max_context_window = window, effective_context_window_percent = 95 } }
+        }), new UTF8Encoding(false));
 
     // The recorder keeps its file open while running; read it with a share mode that
     // coexists with the writer.
