@@ -7,8 +7,8 @@ internal static class CostLogProbe
         int ModelCount, int TierCount, bool FormulaMatches, bool CachedRecalculationMatches, IReadOnlyList<string> Issues);
     public static Result Run(string root, string threadId)
     {
-        using var monitor = new TokenLogMonitor(root) { PreferredThreadId = threadId };
-        var ledger = monitor.Poll(forceFullScan: true)?.Ledger;
+        using var monitor = new TokenLogMonitor(root);
+        var ledger = monitor.Poll(threadId, forceFullScan: true)?.Ledger;
         if (ledger is null) return new(false, "未读取到会话", 0, 0, 0, 0, false, false, Array.Empty<string>());
         var models = ledger.Calls.Select(c => c.Model).OfType<string>().Distinct(StringComparer.Ordinal).ToArray();
         var profiles = models.Select((model, i) => new ModelPriceProfile("probe-" + i, "诊断示例", new[] { model },

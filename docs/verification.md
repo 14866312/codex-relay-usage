@@ -32,6 +32,7 @@ dotnet publish .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release -r wi
 | --self-test | 合成自检 |
 | --view-probe | 主文档标题、侧栏行、项目标签、识别结果 |
 | --follow-probe | 会话切换与跟随（可选 --hidden） |
+| --thread-switch-probe | 两个静止会话间的读取路由与选择代次（可用 `--sessions <合成日志根>` 隔离运行，只读） |
 | --sidebar-binding-probe | 当前页临时绑定核对 |
 | --cost-log-probe | 费用账本核对（内存合成价格） |
 | --speed-log-probe | 纯生成速度复算 |

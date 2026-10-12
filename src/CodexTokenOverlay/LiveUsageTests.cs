@@ -104,8 +104,8 @@ internal static class LiveUsageTests
         var active = Path.Combine(archiveRoot, "sessions", "live.jsonl");
         File.WriteAllText(active, Meta + Started + Record("archived", U(100), U(100)), utf8);
         File.Copy(active, Path.Combine(archiveRoot, "archived_sessions", "live.jsonl"));
-        using var monitor = new TokenLogMonitor(archiveRoot) { PreferredThreadId = "live" };
-        check("active and archived copies remain one live call", monitor.Poll(true)!.TotalTokens == 110 && monitor.Poll()!.Ledger!.Calls.Count == 1);
+        using var monitor = new TokenLogMonitor(archiveRoot);
+        check("active and archived copies remain one live call", monitor.Poll("live", true)!.TotalTokens == 110 && monitor.Poll("live")!.Ledger!.Calls.Count == 1);
         File.WriteAllText(path, Meta + Legacy(U(100)), utf8); reader = new(path, "live");
         check("legacy-only token display remains compatible", reader.Read()!.TotalTokens == 110 && !reader.Read()!.TurnInProgress);
         File.WriteAllText(path, Meta + Started + Context, utf8);

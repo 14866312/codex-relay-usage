@@ -211,18 +211,19 @@ internal static partial class ProbeRunner
         if (args.Count >= 4 && args[0].Equals("--thread-switch-probe", StringComparison.OrdinalIgnoreCase))
         {
             using var monitor = new TokenLogMonitor(sessionRoot);
-            monitor.PreferredThreadId = args[2];
-            var first = monitor.Poll(forceFullScan: true);
-            var firstVersion = monitor.ActiveSessionVersion;
-            monitor.PreferredThreadId = args[3];
-            var second = monitor.Poll();
-            var secondVersion = monitor.ActiveSessionVersion;
+            var selection = new SessionSelection();
+            selection.Observe(new ActiveThreadRouteStatus(args[2], 1, true, 1, null), null, 0);
+            var firstRequest = selection.Request();
+            var first = monitor.Poll(firstRequest.ThreadId, forceFullScan: true);
+            selection.Observe(new ActiveThreadRouteStatus(args[3], 1, true, 2, null), null, 0);
+            var secondRequest = selection.Request();
+            var second = monitor.Poll(secondRequest.ThreadId);
             WriteJson(args[1], new
             {
                 FirstSnapshot = first,
-                FirstVersion = firstVersion,
+                FirstVersion = firstRequest.Revision,
                 SecondSnapshot = second,
-                SecondVersion = secondVersion
+                SecondVersion = secondRequest.Revision
             });
             return true;
         }
@@ -231,11 +232,8 @@ internal static partial class ProbeRunner
         if (args.Count >= 2 && args[0].Equals("--probe", StringComparison.OrdinalIgnoreCase))
         {
             using var monitor = new TokenLogMonitor(sessionRoot);
-            if (args.Count >= 3 && !args[2].StartsWith("--", StringComparison.Ordinal))
-            {
-                monitor.PreferredThreadId = args[2];
-            }
-            WriteJson(args[1], monitor.Poll(forceFullScan: true));
+            var threadId = args.Count >= 3 && !args[2].StartsWith("--", StringComparison.Ordinal) ? args[2] : null;
+            WriteJson(args[1], monitor.Poll(threadId, forceFullScan: true));
             return true;
         }
 

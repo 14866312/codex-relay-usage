@@ -98,36 +98,35 @@ internal static class ConversationSwitchTests
             payload = new { type = "token_count", info = new { total_token_usage = new { input_tokens = input, output_tokens = 5, total_tokens = input + 5 } } } }) + '\n';
         var a = Path.Combine(sessions, "a.jsonl"); var b = Path.Combine(sessions, "b.jsonl");
         File.WriteAllText(a, Meta("a") + Usage(10), utf8); File.WriteAllText(b, Meta("b") + Usage(20), utf8);
-        using var monitor = new TokenLogMonitor(home) { PreferredThreadId = "a" };
-        monitor.Poll(true); var aBytes = monitor.ReaderBytesRead("a");
-        monitor.PreferredThreadId = "b"; check("different idle log is selected without a write", monitor.Poll()!.TotalTokens == 25);
+        using var monitor = new TokenLogMonitor(home);
+        monitor.Poll("a", true); var aBytes = monitor.ReaderBytesRead("a");
+        check("different idle log is selected without a write", monitor.Poll("b")!.TotalTokens == 25);
         var bBytes = monitor.ReaderBytesRead("b");
-        monitor.PreferredThreadId = "a";
-        check("warm revisit retains values without rereading the log", monitor.Poll()!.TotalTokens == 15 && monitor.ReaderBytesRead("a") == aBytes);
+        check("warm revisit retains values without rereading the log", monitor.Poll("a")!.TotalTokens == 15 && monitor.ReaderBytesRead("a") == aBytes);
         var append = Usage(30); File.AppendAllText(a, append, utf8);
-        monitor.PreferredThreadId = "b"; monitor.Poll(true); monitor.PreferredThreadId = "a";
-        check("revisit reads only bytes appended in the background", monitor.Poll()!.TotalTokens == 35 &&
+        monitor.Poll("b", true);
+        check("revisit reads only bytes appended in the background", monitor.Poll("a")!.TotalTokens == 35 &&
             monitor.ReaderBytesRead("a") == aBytes + utf8.GetByteCount(append) && monitor.ReaderBytesRead("b") == bBytes);
-        var half = Usage(40); File.AppendAllText(a, half[..(half.Length / 2)], utf8); monitor.Poll(true);
-        monitor.PreferredThreadId = "b"; monitor.Poll();
-        File.AppendAllText(a, half[(half.Length / 2)..], utf8); monitor.PreferredThreadId = "a";
-        check("partial usage survives switching away and back", monitor.Poll(true)!.TotalTokens == 45);
+        var half = Usage(40); File.AppendAllText(a, half[..(half.Length / 2)], utf8); monitor.Poll("a", true);
+        monitor.Poll("b");
+        File.AppendAllText(a, half[(half.Length / 2)..], utf8);
+        check("partial usage survives switching away and back", monitor.Poll("a", true)!.TotalTokens == 45);
         var archive = Path.Combine(home, "archived_sessions", "a.jsonl"); File.Move(a, archive);
-        check("cached reader follows archive moves without double counting", monitor.Poll(true)!.TotalTokens == 45);
+        check("cached reader follows archive moves without double counting", monitor.Poll("a", true)!.TotalTokens == 45);
         var alternate = Path.Combine(temporaryDirectory, "alternate"); Directory.CreateDirectory(alternate);
         File.WriteAllText(Path.Combine(alternate, "a.jsonl"), Meta("a") + Usage(90), utf8);
         monitor.SetRoot(alternate);
-        check("root change invalidates same-ID reader cache", monitor.Poll(true)!.TotalTokens == 95);
-        monitor.SetRoot(home); monitor.PreferredThreadId = "a"; monitor.Poll(true); aBytes = monitor.ReaderBytesRead("a");
-        monitor.SetRoot(sessions); monitor.Poll();
+        check("root change invalidates same-ID reader cache", monitor.Poll("a", true)!.TotalTokens == 95);
+        monitor.SetRoot(home); monitor.Poll("a", true); aBytes = monitor.ReaderBytesRead("a");
+        monitor.SetRoot(sessions); monitor.Poll("a");
         check("equivalent normalized root preserves incremental progress", monitor.ReaderBytesRead("a") == aBytes);
         for (var i = 0; i < TokenLogMonitor.ReaderCacheCapacity + 2; i++)
         {
             var id = "cache-" + i; File.WriteAllText(Path.Combine(sessions, id + ".jsonl"), Meta(id) + Usage(i), utf8);
-            monitor.PreferredThreadId = id; monitor.Poll(true);
+            monitor.Poll(id, true);
         }
         check("reader cache bounds memory while retaining recent sessions", monitor.ReaderBytesRead("cache-0") is null &&
-            monitor.ReaderBytesRead("cache-9") is not null && monitor.Poll()!.TotalTokens == 14);
+            monitor.ReaderBytesRead("cache-9") is not null && monitor.Poll("cache-9")!.TotalTokens == 14);
 
         var cancelPath = Path.Combine(sessions, "cancel.jsonl");
         var prefix = Meta("cancel") + Usage(100) + "{\"type\":\"turn_context\",\"payload\":{\"padding\":\"";
@@ -160,7 +159,7 @@ internal static class ConversationSwitchTests
         var eofBytes = eofReader.TotalBytesRead;
         check("cancellation at EOF preserves fingerprint and latest parsed usage", eofReader.Read()!.TotalTokens == 305 && eofReader.TotalBytesRead == eofBytes);
         using var alreadyCancelled = new CancellationTokenSource(); alreadyCancelled.Cancel(); cancelled = false;
-        try { monitor.Poll(true, alreadyCancelled.Token); } catch (OperationCanceledException) { cancelled = true; }
+        try { monitor.Poll("cache-9", true, alreadyCancelled.Token); } catch (OperationCanceledException) { cancelled = true; }
         check("superseded request does not begin a directory scan", cancelled);
     }
 }

@@ -542,18 +542,14 @@ internal sealed class OverlayContext : ApplicationContext
         _nextBackgroundPoll = Environment.TickCount64 + 1_000;
         var request = _selection.Request();
         var prices = _prices;
-        var manualId = _manualThreadId;
         var root = _queuedRoot;
         var logVersion = Interlocked.Read(ref _logChangeVersion);
         var cancellation = _readCancellation = new CancellationTokenSource();
         _ = Task.Run(() =>
             {
                 if (root is not null) _monitor.SetRoot(root);
-                _monitor.PinActiveSession = false;
                 cancellation.Token.ThrowIfCancellationRequested();
-                _monitor.PreferredThreadId = request.ThreadId;
-                if (manualId is not null) _monitor.SelectManual(manualId);
-                var snapshot = _monitor.Poll(cancellationToken: cancellation.Token);
+                var snapshot = _monitor.Poll(request.ThreadId, cancellationToken: cancellation.Token);
                 var cost = snapshot?.Ledger is { } ledger ? _costCalculator.Calculate(ledger, prices, cancellation.Token) : null;
                 return (Snapshot: snapshot, Error: _monitor.LastError, Cost: cost);
             })

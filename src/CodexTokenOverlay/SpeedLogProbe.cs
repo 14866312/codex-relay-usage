@@ -8,8 +8,8 @@ internal static class SpeedLogProbe
         double? GenerationSeconds, double? ToolSeconds, double? GenerationShare);
     public static Result Run(string root, string threadId)
     {
-        using var monitor = new TokenLogMonitor(root) { PreferredThreadId = threadId };
-        var snapshot = monitor.Poll(forceFullScan: true);
+        using var monitor = new TokenLogMonitor(root);
+        var snapshot = monitor.Poll(threadId, forceFullScan: true);
         if (snapshot is null) return new(false, false, null, false, null, null, null);
         var generation = snapshot.GenerationSeconds;
         var measuredSeconds = generation + (snapshot.ToolSeconds ?? 0);

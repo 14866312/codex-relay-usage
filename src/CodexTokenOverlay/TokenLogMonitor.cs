@@ -12,8 +12,6 @@ internal sealed class TokenLogMonitor : IDisposable
     private readonly List<FileSystemWatcher> _watchers = [];
     private Dictionary<string, SessionEntry> _catalog = new(StringComparer.OrdinalIgnoreCase);
     private string _root;
-    private string? _preferred, _pinnedId, _activeId;
-    private bool _pinned;
     internal const int ReaderCacheCapacity = 8;
     // Related members keep their own readers so a group larger than the selection cache
     // never restarts from byte zero; the group monitor releases members it dropped.
@@ -24,7 +22,6 @@ internal sealed class TokenLogMonitor : IDisposable
     private readonly Dictionary<string, IncrementalSessionReader> _memberReaders = new(StringComparer.OrdinalIgnoreCase);
     private readonly LinkedList<string> _memberOrder = new();
     private RelatedSessionCatalogSnapshot _relations = RelatedSessionCatalogSnapshot.Empty;
-    private long _version;
     private int _dirty = 1;
     private DateTime _lastScan;
     private bool _disposed;
@@ -37,8 +34,6 @@ internal sealed class TokenLogMonitor : IDisposable
         CreateWatchers();
     }
     public string SessionRoot { get { lock (_sync) return _root; } }
-    public long ActiveSessionVersion { get { lock (_sync) return _version; } }
-    public string? ActiveThreadId { get { lock (_sync) return _activeId; } }
     public RelatedSessionCatalogSnapshot Relations { get { lock (_sync) return _relations; } }
     // Refreshes the catalog only when the directory changed or the scan went stale.
     internal RelatedSessionCatalogSnapshot RefreshRelations(CancellationToken cancellationToken = default)
@@ -48,16 +43,6 @@ internal sealed class TokenLogMonitor : IDisposable
             if (Interlocked.Exchange(ref _dirty, 0) != 0 || DateTime.UtcNow - _lastScan >= TimeSpan.FromSeconds(1)) Scan(cancellationToken);
             return _relations;
         }
-    }
-    public string? PreferredThreadId { get { lock (_sync) return _preferred; } set { lock (_sync) _preferred = CleanId(value); } }
-    public bool PinActiveSession
-    {
-        get { lock (_sync) return _pinned; }
-        set { lock (_sync) { _pinned = value; _pinnedId = value ? _activeId ?? _preferred : null; } }
-    }
-    public void SelectManual(string id)
-    {
-        lock (_sync) { _pinnedId = CleanId(id); _pinned = _pinnedId is not null; }
     }
     public void SetRoot(string root)
     {
@@ -69,7 +54,7 @@ internal sealed class TokenLogMonitor : IDisposable
             foreach (var watcher in _watchers) watcher.Dispose();
             foreach (var cached in _readers.Values) cached.Dispose();
             foreach (var cached in _memberReaders.Values) cached.Dispose();
-            _watchers.Clear(); _catalog.Clear(); _readers.Clear(); _readerOrder.Clear(); _version++; _lastScan = default;
+            _watchers.Clear(); _catalog.Clear(); _readers.Clear(); _readerOrder.Clear(); _lastScan = default;
             _memberReaders.Clear(); _memberOrder.Clear(); _relations = RelatedSessionCatalogSnapshot.Empty;
             Interlocked.Exchange(ref _dirty, 1); CreateWatchers();
         }
@@ -187,15 +172,15 @@ internal sealed class TokenLogMonitor : IDisposable
         } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return titles;
     }
-    public TokenSnapshot? Poll(bool forceFullScan = false, CancellationToken cancellationToken = default)
+    // Reads exactly the given session; a null id keeps returning the empty result an
+    // unselected monitor used to give. Which session that is lives in SessionSelection.
+    public TokenSnapshot? Poll(string? threadId, bool forceFullScan = false, CancellationToken cancellationToken = default)
     {
         lock (_sync)
         {
             if (_disposed) return null;
             cancellationToken.ThrowIfCancellationRequested();
-            var selected = _pinned ? _pinnedId : _preferred;
-            if (!string.Equals(selected, _activeId, StringComparison.OrdinalIgnoreCase))
-            { _activeId = selected; _version++; }
+            var selected = CleanId(threadId);
             if (selected is null) return null;
             if (forceFullScan || Interlocked.Exchange(ref _dirty, 0) != 0 || DateTime.UtcNow - _lastScan >= TimeSpan.FromSeconds(1)) Scan(cancellationToken);
             if (!_catalog.TryGetValue(selected, out var entry))
