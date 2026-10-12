@@ -15,7 +15,7 @@ dotnet publish .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release -r wi
 
 本机的悬浮条由两个快捷方式启动，二者都直接指向本机发布目录里的可执行文件，不是系统安装：桌面 `Codex 用量助手.lnk`（手动入口），以及登录启动项 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Codex 用量自动启动.lnk`（由发布目录的 `scripts\Install-CodexStartup.ps1` 写入，托盘“开机启动”调用的也是它）。
 
-升级步骤：`Publish-Local.ps1` 产出 `artifacts\CodexRelayUsage-<版本>-win-x64\` → 把桌面快捷方式指向新目录的 `CodexRelayUsage.exe` → 运行新目录的 `scripts\Install-CodexStartup.ps1`，由它刷新登录启动项并启动新版；旧目录保留，回滚时把两个入口指回去即可。2026-10-12 已按此把两个入口从 1.3.7 切到 1.3.8。
+升级步骤：`Publish-Local.ps1` 产出 `artifacts\CodexRelayUsage-<版本>-win-x64\` → 把桌面快捷方式指向新目录的 `CodexRelayUsage.exe` → 运行新目录的 `scripts\Install-CodexStartup.ps1`，由它刷新登录启动项并启动新版；旧目录保留，回滚时把两个入口指回去即可。2026-10-12 已按此把两个入口从 1.3.7 切到 1.3.8。日常启动请走快捷方式或双击 EXE（`explorer.exe CodexRelayUsage.exe` 等价）；不要从其它进程里以子进程方式启动悬浮条——它会随启动它的进程所在的作业一起退出，2026-10-12 实测脚本启动的实例在 Codex 重启时一并消失。
 
 ## 验证要求
 
