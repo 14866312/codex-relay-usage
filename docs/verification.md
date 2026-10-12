@@ -11,6 +11,12 @@ dotnet publish .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release -r wi
 - 完整发布走 `\scripts\Publish-Local.ps1 -DotnetPath dotnet`：自包含 x64 EXE、独立 ZIP、源码 ZIP、SHA256 与预览图。
 - SDK 由 global.json 指定（已验证 10.0.401）；源码包排除 bin/obj、SDK、用户设置与真实日志。
 
+## 本机部署（开发机快捷方式）
+
+本机的悬浮条由两个快捷方式启动，二者都直接指向本机发布目录里的可执行文件，不是系统安装：桌面 `Codex 用量助手.lnk`（手动入口），以及登录启动项 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Codex 用量自动启动.lnk`（由发布目录的 `scripts\Install-CodexStartup.ps1` 写入，托盘“开机启动”调用的也是它）。
+
+升级步骤：`Publish-Local.ps1` 产出 `artifacts\CodexRelayUsage-<版本>-win-x64\` → 把桌面快捷方式指向新目录的 `CodexRelayUsage.exe` → 运行新目录的 `scripts\Install-CodexStartup.ps1`，由它刷新登录启动项并启动新版；旧目录保留，回滚时把两个入口指回去即可。2026-10-12 已按此把两个入口从 1.3.7 切到 1.3.8。
+
 ## 验证要求
 
 - `*Tests.cs` 与合成自检编译进发布 EXE，Verify.ps1 校验的就是用户拿到的同一份二进制（见 [ADR-0001](adr/0001-ship-tests-inside-release-exe.md)）；不要在发布路径上移出或加 `#if DEBUG`。
