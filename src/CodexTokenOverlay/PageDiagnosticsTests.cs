@@ -7,6 +7,8 @@ namespace CodexTokenOverlay;
 // full queue or the size limit stops the recording while the statistics keep running.
 internal static class PageDiagnosticsTests
 {
+    private static readonly string[] RecoveryFieldNames = { "Completed", "Milliseconds", "Outcome" };
+
     internal static void Run(Action<string, bool> check, string directory)
     {
         check("raw page states are classified without identifiers",
@@ -26,8 +28,10 @@ internal static class PageDiagnosticsTests
                 startError is null && recorder is not null && Directory.GetFiles(run, "*.jsonl").Length == 1);
             recorder!.Observe(new("pending", PageWaitStage.Reading, 200, 1, true, false));
             recorder.Observe(new("pending", PageWaitStage.Reading, 900, 1, true, false));
-            recorder.Observe(new("pending", PageWaitStage.NotReady, 3_200, 1, true, false));
-            recorder.Observe(new("ready", PageWaitStage.None, 0, 1, true, true));
+            recorder.Observe(new("pending", PageWaitStage.NotReady, 3_200, 1, true, false,
+                new PageRecoverySnapshot(2, PageRecoveryOutcome.DocumentReached, 41)));
+            recorder.Observe(new("ready", PageWaitStage.None, 0, 1, true, true,
+                new PageRecoverySnapshot(2, PageRecoveryOutcome.DocumentReached, 41)));
             recorder.Stop("测试结束");
             check("a stopped recorder keeps its reason for the tray", recorder.StopReason == "测试结束");
         }
@@ -42,13 +46,22 @@ internal static class PageDiagnosticsTests
         check("recovery records the wait that preceded it",
             lines.Any(l => l.RootElement.GetProperty("Kind").GetString() == "recovered"
                 && l.RootElement.GetProperty("PendingMs").GetDouble() == 3_200));
+        check("the recovery state is recorded without identifiers",
+            lines.Any(l => l.RootElement.TryGetProperty("Recovery", out var recovery)
+                && recovery.GetProperty("Completed").GetInt32() == 2
+                && recovery.GetProperty("Outcome").GetString() == "document"
+                && recovery.GetProperty("Milliseconds").GetDouble() == 41));
+        check("the recovery record keeps its own identifier-free allow-list",
+            lines.Where(l => l.RootElement.TryGetProperty("Recovery", out _)).All(l =>
+                l.RootElement.GetProperty("Recovery").EnumerateObject().Select(p => p.Name).Order()
+                    .SequenceEqual(RecoveryFieldNames)));
         check("the stop reason is recorded",
             lines.Any(l => l.RootElement.GetProperty("Kind").GetString() == "stop"
                 && l.RootElement.GetProperty("Reason").GetString() == "测试结束"));
         var properties = lines.SelectMany(l => l.RootElement.EnumerateObject().Select(p => p.Name))
             .Distinct().Order().ToArray();
         check("the record schema stays on the identifier-free allow-list",
-            properties.SequenceEqual(new[] { "Generation", "Kind", "Numbers", "PendingMs", "Raw", "Reason", "Stage", "Time", "Visible" }));
+            properties.SequenceEqual(new[] { "Generation", "Kind", "Numbers", "PendingMs", "Raw", "Reason", "Recovery", "Stage", "Time", "Visible" }));
 
         var limited = Path.Combine(folder, "limited");
         using (var recorder = PageDiagnosticsRecorder.Start(limited, out _, maximumBytes: 400))

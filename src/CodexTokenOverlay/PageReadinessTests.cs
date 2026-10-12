@@ -229,21 +229,37 @@ internal static class PageReadinessTests
         check("a log root reset drops the candidate immediately", resolver.Resolve(View(10), titles, projects).ThreadId is null);
     }
 
-    private sealed class SyntheticPageForm : Form
+    // Shared with the recovery checks: the synthetic page records every role query so
+    // a check can tell which call path actually reached the document node.
+    internal sealed class SyntheticPageForm : Form
     {
         protected override bool ShowWithoutActivation => true;
     }
 
-    private sealed class SyntheticDocumentControl : Control
+    internal sealed class SyntheticDocumentControl : Control
     {
         internal string DocumentName = "";
         internal string DocumentValue = "";
+        internal int RoleQueries;
+        internal string? FillOnNextRoleQuery;
         protected override AccessibleObject CreateAccessibilityInstance() => new SyntheticDocumentAccessible(this);
         private sealed class SyntheticDocumentAccessible(SyntheticDocumentControl owner) : ControlAccessibleObject(owner)
         {
             public override string? Name { get => owner.DocumentName; set { } }
             public override string? Value { get => owner.DocumentValue; set => owner.DocumentValue = value ?? ""; }
-            public override AccessibleRole Role => AccessibleRole.Document;
+            public override AccessibleRole Role
+            {
+                get
+                {
+                    owner.RoleQueries++;
+                    if (owner.FillOnNextRoleQuery is { } route)
+                    {
+                        owner.FillOnNextRoleQuery = null;
+                        owner.DocumentValue = route;
+                    }
+                    return AccessibleRole.Document;
+                }
+            }
         }
     }
 }

@@ -253,6 +253,7 @@ internal static class SyntheticSelfTests
             ConversationSwitchTests.Run(Check, directory);
             PageReadinessTests.Run(Check, directory);
             PageDiagnosticsTests.Run(Check, directory);
+            RecoveryTests.Run(Check, directory);
             SidebarIdentificationTests.Run(Check, directory);
             DebugRouteTests.Run(Check);
             SessionCostTests.Run(Check, directory);

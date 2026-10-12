@@ -8,9 +8,10 @@ namespace CodexTokenOverlay;
 
 // One observation of the page state, free of titles, session ids, urls and usage
 // numbers: the raw route state, the stage the strip actually shows, the wait duration,
-// the window generation, strip visibility and whether numbers are available.
+// the window generation, strip visibility, whether numbers are available, and how the
+// accessibility recovery was doing.
 internal sealed record PageDiagnosticsSample(string Raw, PageWaitStage Stage, double PendingMilliseconds,
-    int Generation, bool Visible, bool Numbers);
+    int Generation, bool Visible, bool Numbers, PageRecoverySnapshot? Recovery = null);
 
 internal static class PageDiagnosticsRules
 {
@@ -97,12 +98,17 @@ internal sealed class PageDiagnosticsRecorder : IDisposable
         _last = sample;
         if (previous is not null && previous.Raw == sample.Raw && previous.Stage == sample.Stage
             && previous.Generation == sample.Generation && previous.Visible == sample.Visible
-            && previous.Numbers == sample.Numbers) return;
+            && previous.Numbers == sample.Numbers && previous.Recovery == sample.Recovery) return;
         var kind = previous is null ? "start" : previous.Raw == "pending" && sample.Raw != "pending" ? "recovered" : "state";
         var pending = kind == "recovered" ? previous!.PendingMilliseconds : sample.PendingMilliseconds;
         TryEnqueue(new PageDiagnosticsLine(kind, DateTime.UtcNow, sample.Raw, PageDiagnosticsRules.StageName(sample.Stage),
-            Math.Round(pending), sample.Generation, sample.Visible, sample.Numbers));
+            Math.Round(pending), sample.Generation, sample.Visible, sample.Numbers, null, RecoveryLine(sample.Recovery)));
     }
+
+    private static PageRecoveryLine? RecoveryLine(PageRecoverySnapshot? recovery) =>
+        recovery is { Completed: > 0 } snapshot
+            ? new(snapshot.Completed, PageRecoveryRules.OutcomeName(snapshot.Outcome), Math.Round(snapshot.Milliseconds ?? 0))
+            : null;
 
     public void Stop(string reason)
     {
@@ -162,5 +168,7 @@ internal sealed class PageDiagnosticsRecorder : IDisposable
     }
 
     private sealed record PageDiagnosticsLine(string Kind, DateTime Time, string? Raw, string? Stage,
-        double? PendingMs, int? Generation, bool? Visible, bool? Numbers, string? Reason = null);
+        double? PendingMs, int? Generation, bool? Visible, bool? Numbers, string? Reason = null, PageRecoveryLine? Recovery = null);
+
+    private sealed record PageRecoveryLine(int Completed, string? Outcome, double? Milliseconds);
 }

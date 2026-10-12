@@ -1287,7 +1287,8 @@ internal sealed class OverlayContext : ApplicationContext
             PageDiagnosticsRules.RawKind(route),
             PageWaitRules.Stage(route, Stopwatch.GetTimestamp()),
             route.PagePendingSince == 0 ? 0 : Stopwatch.GetElapsedTime(route.PagePendingSince).TotalMilliseconds,
-            route.PageGeneration, _form.Visible, _lastSnapshot is not null));
+            route.PageGeneration, _form.Visible, _lastSnapshot is not null,
+            _routeMonitor.RecoverySnapshot()));
     }
 
     // A recorder that stopped itself (write failure, full queue or the single-file

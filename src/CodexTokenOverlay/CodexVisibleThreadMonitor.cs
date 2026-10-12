@@ -199,27 +199,38 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
     private readonly Func<CodexViewIdentity, CancellationToken, CopiedConversationLink> _copyLink;
     private readonly TimeSpan _identifyTimeout;
     private readonly Func<long> _clock;
+    private readonly CodexAccessibilityRecovery _recovery;
+    private readonly bool _ownsRecovery;
     private ActiveThreadRouteStatus _status = new(null, 0, false, 0, null);
     private string _root;
     private long _rootRevision;
     private CodexViewIdentity? _view;
     private BindingRequest? _bindingRequest;
     private IdentifyRequest? _identifyRequest;
+    private string? _recoveryLifecycle;
+    private int _recoveryRequests;
     private long _lastReadTimestamp = Stopwatch.GetTimestamp();
     private int _disposed;
     public event Action? StatusChanged;
 
     public CodexVisibleThreadMonitor(string root, Func<CodexViewIdentity>? readView = null,
         Func<CodexViewIdentity, CancellationToken, CopiedConversationLink>? copyLink = null, TimeSpan? identifyTimeout = null,
-        Func<long>? clock = null)
+        Func<long>? clock = null, CodexAccessibilityRecovery? recovery = null)
     {
         _root = root;
         _readViewOverride = readView; _copyLink = copyLink ?? CurrentConversationLink.Read;
         _identifyTimeout = identifyTimeout ?? TimeSpan.FromSeconds(6);
         _clock = clock ?? Stopwatch.GetTimestamp;
+        _recovery = recovery ?? new CodexAccessibilityRecovery(); _ownsRecovery = recovery is null;
         _runner = new Thread(Run) { IsBackground = true, Name = "Codex visible conversation" };
         _runner.SetApartmentState(ApartmentState.STA);
         _runner.Start();
+    }
+    // Opt-in page-state diagnostics read how many recovery walks completed and how the
+    // last one ended; every walk is bound to a window lifetime, never to a page.
+    internal PageRecoverySnapshot RecoverySnapshot()
+    {
+        lock (_sync) return _recovery.Snapshot();
     }
     public ActiveThreadRouteStatus GetStatus()
     {
@@ -442,6 +453,40 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                             _view = view; _lastReadTimestamp = Stopwatch.GetTimestamp();
                             var previous = _status; _status = Advance(previous, TrackPage(previous, next, view.Lifecycle, _clock()));
                             statusChanged = _status.Version != previous.Version;
+                            // A pending page asks the recovery walk to bring Chromium's
+                            // accessibility tree to the document boundary. Requests are
+                            // anchored to the wait start: immediately, then at 2 s and
+                            // 5 s, at most three per window lifetime; a rebuilt window
+                            // lifetime resets the ladder and a readable page stops it.
+                            if (view.Error == CodexViewIdentityReader.PagePendingError)
+                            {
+                                if (_status.PagePendingSince != 0
+                                    && PageRecoveryTarget.TryParse(view.Lifecycle, out var recoveryTarget))
+                                {
+                                    if (!string.Equals(_recoveryLifecycle, view.Lifecycle, StringComparison.Ordinal))
+                                    {
+                                        _recoveryLifecycle = view.Lifecycle; _recoveryRequests = 0;
+                                    }
+                                    var wait = _recoveryRequests switch
+                                    {
+                                        0 => TimeSpan.Zero,
+                                        1 => TimeSpan.FromSeconds(2),
+                                        2 => TimeSpan.FromSeconds(5),
+                                        _ => (TimeSpan?)null
+                                    };
+                                    if (wait is { } threshold
+                                        && Stopwatch.GetElapsedTime(_status.PagePendingSince, _clock()) >= threshold
+                                        && _recovery.TryRequest(recoveryTarget))
+                                        _recoveryRequests++;
+                                }
+                                else
+                                {
+                                    // A pending page without a readable window lifetime
+                                    // cannot be bound to a target; never carry a stale
+                                    // count into the next window.
+                                    _recoveryLifecycle = null; _recoveryRequests = 0;
+                                }
+                            }
                             // Publish the exact identity before completing the click task.
                             if (publishIdentify) { _identifyRequest = null; identify!.Completion.TrySetResult(identifyError); }
                         }
@@ -473,5 +518,6 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
         lock (_sync) { _bindingRequest?.Completion.TrySetResult("工具已退出"); _bindingRequest = null; CancelIdentify("工具已退出"); }
         // An inaccessible or hung renderer may take longer to answer; never block the UI indefinitely.
         if (_runner.Join(500)) { _wake.Dispose(); _cancellation.Dispose(); }
+        if (_ownsRecovery) _recovery.Dispose();
     }
 }
