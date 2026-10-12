@@ -29,5 +29,9 @@
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets/app.ico" LogicalName="CodexTokenOverlay.Assets.app.ico" />
+    <!-- The login-startup scripts stay external files next to the EXE, so the documented
+         publish -> Verify.ps1 flow runs on any self-contained publish directory. -->
+    <Content Include="..\..\scripts\Install-CodexStartup.ps1" Link="scripts\Install-CodexStartup.ps1" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\scripts\Install-Startup-Package.vbs" Link="scripts\Install-Startup-Package.vbs" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

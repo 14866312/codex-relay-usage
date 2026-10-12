@@ -26,10 +26,8 @@ foreach ($name in @("README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $name) -Destination $binaryDirectory -Force
 }
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party") -Destination $binaryDirectory -Recurse -Force
-New-Item -ItemType Directory -Path (Join-Path $binaryDirectory "scripts") -Force | Out-Null
-foreach ($launcher in @("Install-CodexStartup.ps1", "Install-Startup-Package.vbs")) {
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $launcher) -Destination (Join-Path $binaryDirectory "scripts") -Force
-}
+# The login-startup scripts land in the publish directory's scripts/ through the project's
+# publish items, so a plain dotnet publish can run Verify.ps1 on its own output.
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Install-Startup-Package.vbs") -Destination (Join-Path $binaryDirectory "设置开机自动启动.vbs") -Force
 & (Join-Path $PSScriptRoot "Verify.ps1") -ExecutablePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -OutputDirectory (Join-Path $binaryDirectory "verification")
 $previewDirectory = Join-Path $repositoryRoot "previews"
@@ -56,7 +54,7 @@ $stream = [System.IO.File]::Open($sourceArchive, [System.IO.FileMode]::Create)
 $zip = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Create)
 try {
     $sourceFiles = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
-    foreach ($name in @(".gitignore", "global.json", "README.md", "README.zh-CN.md", "LICENSE", "UPSTREAM.md", "ACCEPTANCE.zh-CN.md", "ACCEPTANCE-archive.zh-CN.md", "CHANGELOG.md")) {
+    foreach ($name in @(".gitignore", "global.json", "README.md", "README.zh-CN.md", "LICENSE", "UPSTREAM.md", "AGENTS.md", "CONTEXT.md", "ACCEPTANCE.zh-CN.md", "ACCEPTANCE-archive.zh-CN.md", "CHANGELOG.md")) {
         $sourceFiles.Add((Get-Item -LiteralPath (Join-Path $repositoryRoot $name) -Force))
     }
     foreach ($folder in @("src", "scripts", "tests", "third_party", "previews")) {
@@ -64,6 +62,14 @@ try {
             $relative = $file.FullName.Substring($repositoryRoot.Length + 1).Replace([char]92, [char]47)
             if ($relative -match '(^|/)(bin|obj)(/|$)') { continue }
             if ($file.Name -match '^(prices|settings)\.json($|\.)' -or $file.Extension -eq '.jsonl') { continue }
+            $sourceFiles.Add($file)
+        }
+    }
+    # Knowledge base Markdown and the CI workflow ship with the source package; the
+    # untracked docs/architecture-diagram.html is deliberately not packaged.
+    foreach ($folder in @("docs", ".github")) {
+        foreach ($file in (Get-ChildItem -LiteralPath (Join-Path $repositoryRoot $folder) -Recurse -File |
+                Where-Object { $_.Extension -in @(".md", ".yml") })) {
             $sourceFiles.Add($file)
         }
     }
