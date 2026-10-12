@@ -567,13 +567,22 @@ internal sealed class OverlayContext : ApplicationContext
                         if (task.Status == TaskStatus.RanToCompletion)
                         {
                             if (_selection.TryPublish(request, task.Result.Snapshot, task.Result.Error))
+                            {
                                 _cost = CostPublication.Matches(request, _selection.Revision, _lastSnapshot, _prices.Version, task.Result.Cost)
                                     ? task.Result.Cost : null;
+                                // The cost window is fed by accepted data, not by the
+                                // strip's presentation cache, which skips equal states.
+                                _costDetails?.SetResult(_pendingThreadId, _cost);
+                            }
                             if (_queuedRoot == root) _queuedRoot = null;
                         }
                         else if (task.IsFaulted && task.Exception!.GetBaseException() is not OperationCanceledException)
                         {
-                            if (_selection.TryPublish(request, null, "读取暂时失败，正在重试")) _cost = null;
+                            if (_selection.TryPublish(request, null, "读取暂时失败，正在重试"))
+                            {
+                                _cost = null;
+                                _costDetails?.SetResult(_pendingThreadId, null);
+                            }
                         }
                         RefreshPresentation(); UpdateSessionMenuText(); RefreshTrayText();
                         RequestGroupPoll(request, prices);
@@ -616,7 +625,13 @@ internal sealed class OverlayContext : ApplicationContext
                     {
                         var snapshot = task.Status == TaskStatus.RanToCompletion ? task.Result : null;
                         if (SessionGroupPublication.Matches(snapshot, _pendingThreadId, _selection.Revision,
-                            _monitor.Relations.Version, _prices.Version)) _group = snapshot;
+                            _monitor.Relations.Version, _prices.Version))
+                        {
+                            // Members can change while the main snapshot stays equal, so the
+                            // window is updated here instead of through the presentation cache.
+                            _group = snapshot;
+                            _costDetails?.SetGroup(_group);
+                        }
                         RefreshPresentation();
                     }
                 }
@@ -685,6 +700,15 @@ internal sealed class OverlayContext : ApplicationContext
     }
     internal TokenSnapshot? ReadLiveProbeSnapshot() => _lastSnapshot;
     internal SessionGroupSnapshot? ReadGroupProbeSnapshot() => _group;
+
+    // Live probes open the real cost window through the production path; it is moved
+    // off the desktop immediately so verification never covers the user's screen.
+    internal CostDetailsForm? OpenCostDetailsProbe()
+    {
+        ShowCostDetails();
+        if (_costDetails is { } details) details.Location = new Point(-32_000, -32_000);
+        return _costDetails;
+    }
 
     // Explicit local probe for the opt-in recorder: start it against an isolated
     // directory through the same observation path the timer uses, then stop it and
@@ -763,8 +787,6 @@ internal sealed class OverlayContext : ApplicationContext
             _presentation = _presentation with { StatusText = _identifyInFlight ? "正在识别当前对话…" : _inlineIssue ?? "同名对话，请点击右侧识别" };
         else if (_inlineIssue is not null) _presentation = _presentation with { StatusText = _inlineIssue };
         _form.SetPresentation(_presentation);
-        _costDetails?.SetResult(_pendingThreadId, _cost);
-        _costDetails?.SetGroup(_group);
     }
 
     private void EditPrices()
@@ -780,6 +802,8 @@ internal sealed class OverlayContext : ApplicationContext
             _prices = new(_prices.Version + 1, saved);
             _cost = null;
             _group = null;
+            _costDetails?.SetResult(_pendingThreadId, null);
+            _costDetails?.SetGroup(null);
             _readCancellation?.Cancel();
             if (firstSetup)
             {
@@ -803,6 +827,7 @@ internal sealed class OverlayContext : ApplicationContext
             _costDetails.FormClosed += (_, _) => _costDetails = null;
         }
         _costDetails.SetResult(_pendingThreadId, _cost);
+        _costDetails.SetGroup(_group);
         _costDetails.ApplyTheme(_form.CurrentThemePalette);
         _costDetails.Show();
         if (_costDetails.WindowState == FormWindowState.Minimized) _costDetails.WindowState = FormWindowState.Normal;

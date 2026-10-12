@@ -40,7 +40,7 @@ internal static class DiagnosticsRunner
         if (args[0] == "--live-ui-probe")
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); Application.EnableVisualStyles();
-            var result = LiveUiTests.Run();
+            var result = LiveUiTests.Run(args.Count > 2 ? args[2] : null);
             File.WriteAllText(args[1], JsonSerializer.Serialize(result, JsonOptions));
             Environment.ExitCode = result.Failed == 0 ? 0 : 1; return true;
         }

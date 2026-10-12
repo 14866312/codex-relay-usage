@@ -37,6 +37,8 @@ $previewProcess = Start-Process -FilePath (Join-Path $binaryDirectory "CodexRela
 if ($previewProcess.ExitCode -ne 0) { throw "生成预览失败。" }
 $costUiProcess = Start-Process -FilePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -ArgumentList @("--cost-ui-probe", ('"' + (Join-Path $binaryDirectory "verification/cost-ui-previews.json") + '"'), ('"' + $previewDirectory + '"')) -WindowStyle Hidden -PassThru -Wait
 if ($costUiProcess.ExitCode -ne 0) { throw "生成费用窗口预览失败。" }
+$liveUiPreviewProcess = Start-Process -FilePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -ArgumentList @("--live-ui-probe", ('"' + (Join-Path $binaryDirectory "verification/live-ui-previews.json") + '"'), ('"' + $previewDirectory + '"')) -WindowStyle Hidden -PassThru -Wait
+if ($liveUiPreviewProcess.ExitCode -ne 0) { throw "生成明细刷新预览失败。" }
 $feedbackUiProcess = Start-Process -FilePath (Join-Path $binaryDirectory "CodexRelayUsage.exe") -ArgumentList @("--feedback-ui-probe", ('"' + (Join-Path $binaryDirectory "verification/feedback-ui-previews.json") + '"'), ('"' + $previewDirectory + '"')) -WindowStyle Hidden -PassThru -Wait
 if ($feedbackUiProcess.ExitCode -ne 0) { throw "生成工具栏交互预览失败。" }
 & (Join-Path $PSScriptRoot "Generate-PreviewBoard.ps1") -PreviewDirectory $previewDirectory

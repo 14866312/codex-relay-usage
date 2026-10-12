@@ -11,7 +11,7 @@ internal sealed record LiveUiProbeResult(int Passed, int Failed, IReadOnlyList<D
 
 internal static class LiveUiTests
 {
-    internal static LiveUiProbeResult Run()
+    internal static LiveUiProbeResult Run(string? previewDirectory = null)
     {
         var checks = new List<DiagnosticsRunner.TestResult>();
         void Check(string name, bool ok) => checks.Add(new(name, ok, ok ? null : "assertion failed"));
@@ -20,7 +20,7 @@ internal static class LiveUiTests
         Directory.CreateDirectory(directory);
         try
         {
-            LogNotifications(Check, directory, logTimes);
+            LogNotifications(Check, directory, logTimes, previewDirectory);
             WindowEvents(Check, moveTimes);
         }
         catch (Exception error) { checks.Add(new("unhandled live UI exception", false, error.ToString())); }
@@ -28,7 +28,7 @@ internal static class LiveUiTests
         return new(checks.Count(c => c.Passed), checks.Count(c => !c.Passed), checks, Summary(logTimes), Summary(moveTimes));
     }
 
-    private static void LogNotifications(Action<string, bool> check, string directory, List<double> times)
+    private static void LogNotifications(Action<string, bool> check, string directory, List<double> times, string? previewDirectory)
     {
         var home = Path.Combine(directory, "home"); var sessions = Path.Combine(home, "sessions"); Directory.CreateDirectory(sessions);
         var path = Path.Combine(sessions, "live.jsonl"); var utf8 = new UTF8Encoding(false);
@@ -81,6 +81,30 @@ internal static class LiveUiTests
         check("related subagent joins the group through the production controller",
             PumpUntil(() => context.ReadGroupProbeSnapshot()?.Members.Any(m => m.ThreadId == "live-sub" && m.TotalTokens == 40) == true));
         check("group publication leaves the main conversation untouched", context.ReadLiveProbeSnapshot() is { TotalTokens: 1430 });
+        // The cost window follows its own publication: a ready group is present on first
+        // open, and a member-only append lands while the main numbers stay equal.
+        var details = context.OpenCostDetailsProbe();
+        var relatedGrid = details?.Controls.Find("RelatedUsage", true).OfType<DataGridView>().SingleOrDefault();
+        bool SubRow(string tokens) => relatedGrid?.Rows.Cast<DataGridViewRow>().Any(r =>
+            r.Cells[1].Value?.ToString() == OverlayPresentationBuilder.ShortThreadId("live-sub") &&
+            r.Cells[3].Value?.ToString() == tokens) == true;
+        check("cost window shows the ready group on first open", relatedGrid is { Rows.Count: 2 } && SubRow("40"));
+        File.AppendAllText(subPath, LiveUsageTests.Row("token_usage_record", new
+        {
+            thread_id = "live-sub", session_id = "live-sub", response_id = "sub-2", turn_id = "sub-turn",
+            usage = new { input_tokens = 60L, cached_input_tokens = 0L, cache_write_input_tokens = 0L, output_tokens = 20L, reasoning_output_tokens = 0L, total_tokens = 80L },
+            thread_token_usage = new { input_tokens = 90L, cached_input_tokens = 0L, cache_write_input_tokens = 0L, output_tokens = 30L, reasoning_output_tokens = 0L, total_tokens = 120L }
+        }), utf8);
+        check("cost window picks up a member-only append", PumpUntil(() => SubRow("120")));
+        check("member-only append leaves the main conversation untouched", context.ReadLiveProbeSnapshot() is { TotalTokens: 1430 });
+        if (previewDirectory is not null)
+        {
+            details!.Controls.Find("RelatedTab", true).OfType<Button>().SingleOrDefault()?.PerformClick();
+            details.ApplyTheme(OverlayThemePalette.For(OverlayThemeKind.Light));
+            CostUiTests.SavePreview(details, Path.Combine(previewDirectory, "cost-related-live.png"));
+            details.ApplyTheme(OverlayThemePalette.For(OverlayThemeKind.Dark));
+            CostUiTests.SavePreview(details, Path.Combine(previewDirectory, "cost-related-live-dark.png"));
+        }
         check("all log-to-publication latency samples collected", times.Count == 12);
         // The opt-in page-state recorder is wired through the production controller and
         // stays off until it is started.

@@ -181,7 +181,7 @@ internal static class CostUiTests
         finally { Directory.Delete(directory, true); }
         return new(results.Count(r => r.Passed), results.Count(r => !r.Passed), results);
     }
-    private static void SavePreview(Form form, string path)
+    internal static void SavePreview(Form form, string path)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         using var bitmap = new Bitmap(form.Width, form.Height);
