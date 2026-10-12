@@ -13,9 +13,9 @@
 - 发布过程记录：首次发布在剪贴板探针处连续三次命中全局剪贴板竞争（“所请求的剪贴板操作失败”，重跑即通过），按失败即停中止；中止后的包目录残留让增量 `dotnet publish` 跳过 EXE 旁 `scripts/` 的复制，删除残留目录后全新发布通过（Verify 的启动检查会拦下这类残缺包）。已把“重新发布先删除包目录”写入验证流程文档。
 - 回滚：在临时工作树对 a0acfb1 执行 revert，20 个条目干净应用、无冲突；回滚树与基线 5c12bfa 逐字节一致（`git diff` 为空）、构建零警告零错误、自检回到 557 项零失败；本机 1.3.10 包保留，把两个快捷方式指回即可回退。
 - 文档：CHANGELOG 1.3.12；README.zh-CN 数字口径新增“可用窗口”“模型配置窗口”行；CONTEXT 新增可用窗口／配置窗口／目录参考词条并修订上下文占用；architecture 模块表加入窗口解析；codex-integration 新增“模型目录（models_cache.json）”小节；cost-and-speed 修订上下文口径；verification 记录新检查与发布注意事项；预览由发布流程重新生成（expanded／cost／overview 与 toolbar-context）。
-- 提交与发布：改动提交为 a0acfb1（feat），同批交付 5c12bfa（chore：清理已删除架构图的引用）；本轮只做本机发布与部署，未推送远端（本地领先 11 个提交）、未打标签、未创建 GitHub Release；1.3.11 未单独部署，其改动随本包一并交付。
-- 发布产物：包内 CodexRelayUsage.exe 的 ProductVersion 为 1.3.12+a0acfb1f9abef113803a437ab42d85509f6a5c68，EXE SHA256 = 8e4dcff2…（49,915,362 字节）；独立版 ZIP SHA256 = d4b969a5…（46,786,225 字节），源码 ZIP SHA256 = c4316845…（2,642,135 字节）。
-- 本机部署：桌面“Codex 用量助手.lnk”（描述更新为 1.3.12）与登录“Codex 用量自动启动.lnk”均指向 1.3.12 包，运行实例已由新包启动（旧 1.3.10 实例已退出），重复启动立即退出；scripts/Test-LoginStartup.ps1 的 9 项登录入口检查通过（未重启 Codex）；旧 1.3.10 包保留作回退，部署记录见本机 artifacts，未上传。
+- 提交与发布：改动提交为 a0acfb1（feat）与 58d69f5（docs：验收记录与预览），同批交付 5c12bfa（chore：清理已删除架构图的引用）；推送 main（b308470..58d69f5）并打注解标签 v1.3.12（指向 58d69f5）；GitHub Release「Codex 用量助手 1.3.12」为正式发布（非草稿、非预发布、Latest），附独立版 ZIP、源码 ZIP、两个 .sha256 与 SHA256SUMS.txt。1.3.11 未单独发布，其改动随本包一并交付。
+- 发布产物：包内 CodexRelayUsage.exe 由标签提交 58d69f5 重新构建，ProductVersion 为 1.3.12+58d69f53315114b3d8b7777598cb8ccb0d885180，重跑完整发布脚本零失败（848 项）；EXE SHA256 = da88f66d…（49,915,357 字节）；独立版 ZIP SHA256 = 1e7af92f…（46,788,137 字节），源码 ZIP SHA256 = c40f8bb8…（2,644,136 字节）；从 GitHub 重新下载两个 ZIP 后 SHA256 与本地一致。
+- 本机部署：桌面“Codex 用量助手.lnk”（描述更新为 1.3.12）与登录“Codex 用量自动启动.lnk”均指向 1.3.12 包，运行实例由标签提交重建的包启动（旧 1.3.10 实例已退出），重复启动立即退出；scripts/Test-LoginStartup.ps1 的 9 项登录入口检查通过（未重启 Codex）；旧 1.3.10 包保留作回退，部署记录见本机 artifacts，未上传。
 
 ## 1.3.10 等待提示分档、短空窗绑定恢复与可选页面状态诊断
 
