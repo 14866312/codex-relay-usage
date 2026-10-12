@@ -5,6 +5,7 @@ namespace CodexTokenOverlay;
 internal static class CostUiTests
 {
     private static readonly string[] RelayTestModels = ["relay/test"];
+    private static readonly string[] RelatedGroupNotes = ["1 个成员关系未确认，未计入已知合计"];
 
     internal static DiagnosticsRunner.SelfTestResult Run(string? previewDirectory = null)
     {
@@ -96,6 +97,30 @@ internal static class CostUiTests
             var amountLabel = Find<Label>(details, "CostAmount");
             Check("large amount has room for current DPI font", amountLabel.Height >= TextRenderer.MeasureText(amountLabel.Text, amountLabel.Font).Height);
             Check("priced tab has room for count and text", Find<Button>(details, "PricedTab").Width >= TextRenderer.MeasureText(Find<Button>(details, "PricedTab").Text, details.Font).Width + 26);
+            var relatedGroup = new SessionGroupSnapshot(result.ThreadId, 1, 1, 1, 1, new[]
+            {
+                new RelatedMemberUsage(result.ThreadId, null, RelatedMemberKind.Root, "当前会话", null,
+                    RelatedCoverage.Complete, RelatedCoverage.Complete, 100, 80, 0, 20, 0, 1, 1, .5m, null, "本地日志")
+                    { CountedInTotals = true },
+                new RelatedMemberUsage("sub-thread-example", result.ThreadId, RelatedMemberKind.Subagent, "父 root…", "data-explorer",
+                    RelatedCoverage.Partial, RelatedCoverage.Unavailable, 40, 30, 0, 10, 0, 1, 0, null,
+                    "线程累计与调用合计不一致，只计入自身调用", "本地日志") { CountedInTotals = true },
+                new RelatedMemberUsage("side-thread-example", result.ThreadId, RelatedMemberKind.SideChat, "会话内侧聊", null,
+                    RelatedCoverage.Complete, RelatedCoverage.Unavailable, 30, 20, 0, 10, 0, 0, 0, null, null, "运行时观察")
+                    { CountedInTotals = true }
+            }, RelatedGroupNotes);
+            details.SetGroup(relatedGroup);
+            Find<Button>(details, "RelatedTab").PerformClick();
+            var related = Find<DataGridView>(details, "RelatedUsage");
+            Check("related tab lists every member kind with its coverage", related.Rows.Count == 3 &&
+                related.Rows[0].Cells[0].Value?.ToString() == "主会话" && related.Rows[1].Cells[0].Value?.ToString() == "子代理" &&
+                related.Rows[1].Cells[5].Value?.ToString()?.Contains("不一致") == true &&
+                related.Rows[2].Cells[5].Value?.ToString()?.Contains("费用 不可用") == true);
+            Check("related summary reports the known total", Find<Label>(details, "RelatedSummary").Text.Contains("已知合计 170"));
+            Check("related notes explain the exclusions", Find<Label>(details, "RelatedNotes").Text.Contains("未确认"));
+            details.SetGroup(null);
+            Check("related tab clears when the group is gone", related.Rows.Count == 0);
+            Find<Button>(details, "PricedTab").PerformClick();
             var detailsBounds = details.Bounds; var detailsMinimum = details.MinimumSize;
             details.FitToWorkingArea(new(0, 0, 1024, 700)); details.PerformLayout();
             Check("small display preserves usable cost table and amount", new Rectangle(0, 0, 1024, 700).Contains(details.Bounds) && groups.Height >= 150 && amountLabel.Visible);
@@ -107,7 +132,11 @@ internal static class CostUiTests
                 SavePreview(details, Path.Combine(previewDirectory, "cost-details-dark.png"));
                 details.SetResult(result.ThreadId, bad); Find<Button>(details, "UnpricedTab").PerformClick();
                 SavePreview(details, Path.Combine(previewDirectory, "cost-unpriced-dark.png"));
+                details.SetGroup(relatedGroup); Find<Button>(details, "RelatedTab").PerformClick();
+                SavePreview(details, Path.Combine(previewDirectory, "cost-related-dark.png"));
                 details.ApplyTheme(OverlayThemePalette.For(OverlayThemeKind.Light));
+                SavePreview(details, Path.Combine(previewDirectory, "cost-related.png"));
+                details.ApplyTheme(OverlayThemePalette.For(OverlayThemeKind.Dark));
                 details.SetResult("waiting", null);
                 SavePreview(details, Path.Combine(previewDirectory, "cost-waiting.png"));
                 using var picker = new SessionPickerForm(new[]

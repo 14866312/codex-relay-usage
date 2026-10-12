@@ -19,7 +19,7 @@
 | [codex-integration.md](codex-integration.md) | 与 Codex 集成的事实：日志、路由、可访问性、IPC | 维护者 |
 | [cost-and-speed.md](cost-and-speed.md) | 费用与速度口径 | 维护者、对账用户 |
 | [verification.md](verification.md) | 构建、验证、发布与归档流程 | 维护者 |
-| [adr/](adr/) | 架构与取舍决策记录（0001–0008） | 维护者 |
+| [adr/](adr/) | 架构与取舍决策记录（0001–0009） | 维护者 |
 | [agents/domain.md](agents/domain.md) | agent 会话读取本知识库的规则 | agent |
 
 ## 何时更新哪份文档

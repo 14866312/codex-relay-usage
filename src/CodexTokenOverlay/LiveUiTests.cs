@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 
 namespace CodexTokenOverlay;
 
@@ -59,6 +60,27 @@ internal static class LiveUiTests
         check("finishing half a row triggers publication with the poll timer stopped", PumpUntil(() => context.ReadLiveProbeSnapshot()?.TotalTokens == 1430));
         File.AppendAllText(path, LiveUsageTests.Row("event_msg", new { type = "task_complete", turn_id = "turn" }), utf8);
         check("completion notification clears running state without adding tokens", PumpUntil(() => context.ReadLiveProbeSnapshot() is { TurnInProgress: false, TotalTokens: 1430 }));
+        // Related usage publishes on its own path: a subagent log joins the group without
+        // touching the main conversation's own numbers.
+        var subPath = Path.Combine(sessions, "live-sub.jsonl");
+        File.WriteAllText(subPath, JsonSerializer.Serialize(new
+        {
+            type = "session_meta",
+            payload = new
+            {
+                id = "live-sub", thread_source = "subagent", cwd = "synthetic", parent_thread_id = "live",
+                source = new { subagent = new { thread_spawn = new { parent_thread_id = "live", depth = 1 } } }
+            }
+        }) + "\n" + LiveUsageTests.Row("turn_context", new { turn_id = "sub-turn", model = "relay/test" }), utf8);
+        File.AppendAllText(subPath, LiveUsageTests.Row("token_usage_record", new
+        {
+            thread_id = "live-sub", session_id = "live-sub", response_id = "sub-1", turn_id = "sub-turn",
+            usage = new { input_tokens = 30L, cached_input_tokens = 0L, cache_write_input_tokens = 0L, output_tokens = 10L, reasoning_output_tokens = 0L, total_tokens = 40L },
+            thread_token_usage = new { input_tokens = 30L, cached_input_tokens = 0L, cache_write_input_tokens = 0L, output_tokens = 10L, reasoning_output_tokens = 0L, total_tokens = 40L }
+        }), utf8);
+        check("related subagent joins the group through the production controller",
+            PumpUntil(() => context.ReadGroupProbeSnapshot()?.Members.Any(m => m.ThreadId == "live-sub" && m.TotalTokens == 40) == true));
+        check("group publication leaves the main conversation untouched", context.ReadLiveProbeSnapshot() is { TotalTokens: 1430 });
         check("all log-to-publication latency samples collected", times.Count == 12);
     }
 

@@ -29,6 +29,14 @@
 - 受控重启实验（2026-10-12，同一登录会话内关闭并重启桌面端）：窗口出现 4 秒后可见，t+6 s 采样仍是未填充文档节点（PENDING），t+8 s 即为就绪——约 2 秒等待，全程未做任何外部动作，工具轮询没有拖慢该过程。开机后的数分钟等待只在冷启动出现，热启动约 2 秒。
 - 侧栏行的节点身份是原生可访问性身份，不是 Codex 会话 ID；生命周期限于一个进程／文档，绝不写入设置。
 
+## 关联会话、子代理与侧聊
+
+- 会话文件首行的 `session_meta` 携带显式关系：子代理写 `source.subagent.thread_spawn.parent_thread_id`（含 `depth`、`agent_path`、`agent_role`），并在顶层重复 `parent_thread_id`；分叉另有 `forked_from_id` 与 `subagent_history_start_ordinal`；`thread_source` 取 `user`／`subagent`／`agent_created_thread`。工具只读这一行的元数据，不解析无关会话历史。
+- 子代理日志就是普通会话 JSONL，包含 `token_usage_record`（`thread_id`、`session_id`、`response_id`、`turn_id`、`usage`、`thread_token_usage`），因此可以按自身调用去重与计价。
+- 实测（本机 26.1007.2314.0，2026-10-12，80 份子代理日志）：带 `forked_from_id` 的分叉子代理，其首条 `thread_token_usage` 等于自身首次调用（6 份样本：子 28,332–39,340 对父 8,471,997–22,722,545），即当前版本的子线程累计是自身范围，不含父线程累计。工具不依赖该结论：成员只在“线程累计与调用合计一致”时标记完整，否则只计入自身调用。
+- 会话内侧聊（`ephemeral` + `sideConversation`）不写 JSONL：本机 313 份活动日志与 9 份归档中没有侧聊记录；`state_5.sqlite` 的 `threads` 表 295 行全部有 `rollout_path`，没有侧聊行；`thread_spawn_edges` 的 80 行与子代理日志一一对应。因此侧聊只能从运行时观察。
+- 桌面渲染进程的会话状态含 `sideConversation`、`ephemeral`、`sideConversationParentNavigationPath`、`forkedFromId`、`parentThreadId` 与 `latestTokenUsageInfo`（由 `thread/tokenUsage/updated` 更新）。这些字段位于应用内部状态，能否经现有回环调试连接稳定读取**尚未验证**；`--runtime-usage-probe` 用于在启用调试连接的 Codex 上核实，未验证前侧聊显示数据不可用原因，不使用完整 IPC 状态或 SQLite 累计替代。
+
 ## IPC 订阅
 
 Codex 的 IPC 连接会为同一客户端保留多个会话订阅，因此订阅不能作为“当前页面”信号；工具仅在诊断路径（--ipc-probe）使用它，生产识别以主文档与本地路由为准。

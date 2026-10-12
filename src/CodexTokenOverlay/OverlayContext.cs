@@ -35,6 +35,11 @@ internal sealed class OverlayContext : ApplicationContext
     private PricingRevision _prices;
     private readonly SessionCostCalculator _costCalculator = new();
     private SessionCostResult? _cost;
+    private readonly CodexRuntimeUsageReader _runtimeUsageReader = new();
+    private readonly SessionGroupMonitor _groupMonitor;
+    private SessionGroupSnapshot? _group;
+    private CancellationTokenSource? _groupCancellation;
+    private int _groupInFlight;
     private CostDetailsForm? _costDetails;
     private OverlayPresentation _presentation;
     private CodexWindowTarget? _currentTarget;
@@ -78,6 +83,7 @@ internal sealed class OverlayContext : ApplicationContext
         try { _monitor = new TokenLogMonitor(useSavedRoot ? _settings.SessionRoot ?? sessionRoot : sessionRoot); }
         catch (ArgumentException) { _monitor = new TokenLogMonitor(sessionRoot); }
         _routeMonitor = new CodexVisibleThreadMonitor(_monitor.SessionRoot);
+        _groupMonitor = new SessionGroupMonitor(_monitor, _runtimeUsageReader);
         _manualThreadId = _settings.PinnedThreadId;
         _presentation = OverlayPresentationBuilder.CreateWaiting(
             "正在寻找当前 Codex 会话…",
@@ -552,6 +558,7 @@ internal sealed class OverlayContext : ApplicationContext
                             if (_selection.TryPublish(request, null, "读取暂时失败，正在重试")) _cost = null;
                         }
                         RefreshPresentation(); UpdateSessionMenuText(); RefreshTrayText();
+                        RequestGroupPoll(request, prices);
                     }
                 }
                 finally
@@ -566,6 +573,47 @@ internal sealed class OverlayContext : ApplicationContext
             }, CancellationToken.None, TaskContinuationOptions.None, uiScheduler);
     }
 
+    // The group read starts only after the main snapshot is published, so member logs and
+    // runtime fields never delay the numbers the strip already shows.
+    private void RequestGroupPoll(SessionReadRequest request, PricingRevision prices)
+    {
+        if (Volatile.Read(ref _disposed) != 0 || Interlocked.CompareExchange(ref _groupInFlight, 1, 0) != 0) return;
+        var cancellation = _groupCancellation = new CancellationTokenSource();
+        var relationVersion = _monitor.Relations.Version;
+        var uiScheduler = TaskScheduler.FromCurrentSynchronizationContext();
+        _ = Task.Run(() =>
+            {
+                try { return _groupMonitor.Update(request.ThreadId, request.Revision, prices, cancellation.Token); }
+                catch (OperationCanceledException) { return null; }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException
+                    or InvalidOperationException or System.ComponentModel.Win32Exception
+                    or System.Net.Http.HttpRequestException or System.Net.WebSockets.WebSocketException)
+                { return null; }
+            })
+            .ContinueWith(task =>
+            {
+                try
+                {
+                    if (Volatile.Read(ref _disposed) == 0)
+                    {
+                        var snapshot = task.Status == TaskStatus.RanToCompletion ? task.Result : null;
+                        if (SessionGroupPublication.Matches(snapshot, _pendingThreadId, _selection.Revision,
+                            _monitor.Relations.Version, _prices.Version)) _group = snapshot;
+                        RefreshPresentation();
+                    }
+                }
+                finally
+                {
+                    if (ReferenceEquals(_groupCancellation, cancellation)) _groupCancellation = null;
+                    cancellation.Dispose();
+                    Interlocked.Exchange(ref _groupInFlight, 0);
+                }
+                if ((request.Revision != _selection.Revision || prices.Version != _prices.Version
+                    || relationVersion != _monitor.Relations.Version) && Volatile.Read(ref _disposed) == 0)
+                    RequestGroupPoll(_selection.Request(), _prices);
+            }, CancellationToken.None, TaskContinuationOptions.None, uiScheduler);
+    }
+
     private bool ObserveSelection()
     {
         var previousView = _pendingRouteStatus.ViewKey;
@@ -574,7 +622,10 @@ internal sealed class OverlayContext : ApplicationContext
         if (!_selection.Observe(_pendingRouteStatus, _manualThreadId, _selectionRevision)) return false;
         _cost = null;
         _costDetails?.SetResult(_pendingThreadId, null);
+        _group = null;
+        _costDetails?.SetGroup(null);
         _readCancellation?.Cancel();
+        _groupCancellation?.Cancel();
         _interaction.CollapseForHostChange(); StopOutsideClickPolling();
         return true;
     }
@@ -615,6 +666,7 @@ internal sealed class OverlayContext : ApplicationContext
         _manuallyHidden = true; Tick(); _timer.Stop();
     }
     internal TokenSnapshot? ReadLiveProbeSnapshot() => _lastSnapshot;
+    internal SessionGroupSnapshot? ReadGroupProbeSnapshot() => _group;
 
     // Renders the real command tree with an isolated configuration, never the user's logs.
     internal void RenderTrayPreviews(string directory)
@@ -665,6 +717,7 @@ internal sealed class OverlayContext : ApplicationContext
         else if (_inlineIssue is not null) _presentation = _presentation with { StatusText = _inlineIssue };
         _form.SetPresentation(_presentation);
         _costDetails?.SetResult(_pendingThreadId, _cost);
+        _costDetails?.SetGroup(_group);
     }
 
     private void EditPrices()
@@ -679,6 +732,7 @@ internal sealed class OverlayContext : ApplicationContext
             var firstSetup = _prices.Settings.Profiles.Count == 0 && saved.Profiles.Count > 0;
             _prices = new(_prices.Version + 1, saved);
             _cost = null;
+            _group = null;
             _readCancellation?.Cancel();
             if (firstSetup)
             {
@@ -1321,6 +1375,8 @@ internal sealed class OverlayContext : ApplicationContext
             if (_trayMenu is not null) { ModernMenuRenderer.DisposeImages(_trayMenu); _trayMenu.Dispose(); }
             _menuFont.Dispose();
             _readCancellation?.Cancel();
+            _groupCancellation?.Cancel();
+            _runtimeUsageReader.Dispose();
             _routeMonitor.Dispose();
             _monitor.Dispose();
             DisposeThemeAndForms();

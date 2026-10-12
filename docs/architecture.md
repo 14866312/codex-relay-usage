@@ -14,7 +14,8 @@
 | 窗口定位与跟随 | CodexWindowLocator、NativeWindowEvents、OverlayLayout | 找到主窗口、原生事件驱动跟随、DPI 与吸附布局 |
 | 会话识别 | CodexVisibleThreadMonitor、CodexDebugRouteReader、CodexSidebarAccessibility、SidebarSessionResolver、ManualAttachment | 主文档／路由／侧栏／标题识别与手动绑定 |
 | 日志与用量 | TokenLogMonitor、LiveTokenUsage、UsageLedger、TokenSnapshot | 会话发现、增量读取、用量视图与账本 |
-| 费用与价格 | SessionCost、PricingSettings、ModelPriceForm、CostDetailsForm | 计价、重算、价格编辑与费用明细 |
+| 关联用量 | RelatedSessionCatalog、SessionGroupMonitor、SessionGroupUsage、CodexRuntimeUsageReader | 显式关系归属、成员分片读取、侧聊运行时投影、分组快照 |
+| 费用与价格 | SessionCost、PricingSettings、ModelPriceForm、CostDetailsForm | 计价、重算、价格编辑与费用明细（含“关联用量”页） |
 | 展示与交互 | TokenStripForm、OverlayPresentation、ModernControls、WindowsTheme、SessionPickerForm | 悬浮条渲染、反馈动画、主题与对话框 |
 | 验证设施 | SyntheticSelfTests、各 `*Tests.cs`、ProbeRunner、DiagnosticsRunner | 合成自检、UI／窗口探针、只读诊断 |
 
@@ -25,6 +26,16 @@
 ## 用量链路
 
 日志目录（会话发现、活动／归档去重）→ 增量读取（追加通知加一秒扫描补偿，半行与未完成 UTF-8 字节补齐）→ 解析逐次调用报告与线程累计 → 账本（按请求身份去重，供费用）与快照（供展示：Token、缓存、上下文、轮次、速度）→ 展示层按字段生成收起与展开内容。价格改动触发后台重算；费用发布前核对会话、账本与价格版本。
+
+## 关联用量链路
+
+主会话链路保持不变：悬浮条只发布当前会话的 Token、缓存、上下文、速度与费用。关联用量在后台另走一条链路，先发布主会话、再更新分组，因此成员日志与运行时读取不会延迟悬浮条数字。
+
+会话元数据（只读 `session_meta` 一行）→ 关系目录（显式父关系、来源、分叉标识，关系集合变化才递增版本）→ 成员归属（多级子代理递归；冲突与成环列为未确认；普通分叉与 `agent_created_thread` 不并入）→ 成员分片读取（每成员每轮 1 MB，读取位置独立于主会话的 8 份缓存，最多 32 个成员）→ 每成员自身用量与独立计价缓存 → 分组快照（分类合计、已知合计、Token／费用覆盖状态、备注）。
+
+侧聊不走日志：由 CodexRuntimeUsageReader 通过已确认主窗口进程的回环调试连接读取字段白名单（线程标识、侧聊标记、父导航路径与数字用量），在页面内构造结果，不读取消息正文或请求体。入口不可用时分组显示明确原因，不用其它来源替代。
+
+分组发布前核对根会话、选择代次、关系版本与价格版本（SessionGroupPublication）；任何一项不匹配的迟到结果都会被丢弃。成员超过上限或日志被截断重写时按读取位置与去重状态重建，不重复计费。
 
 ## 验证设施
 

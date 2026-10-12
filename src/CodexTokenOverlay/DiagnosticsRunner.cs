@@ -26,6 +26,17 @@ internal static class DiagnosticsRunner
             Environment.ExitCode = result is { IsConnected: true } ? 0 : 1;
             return true;
         }
+        if (args[0] == "--runtime-usage-probe" && args.Count > 1)
+        {
+            // Whitelist projection only: identifiers, flags and numbers, never conversation text.
+            using var reader = new CodexRuntimeUsageReader();
+            var result = args.Count > 2 && int.TryParse(args[2], out var runtimeProcessId)
+                ? reader.ReadProcess(runtimeProcessId, $"probe/{runtimeProcessId}", default)
+                : reader.Read(default);
+            File.WriteAllText(args[1], JsonSerializer.Serialize(result, JsonOptions));
+            Environment.ExitCode = result.IsAvailable ? 0 : 1;
+            return true;
+        }
         if (args[0] == "--live-ui-probe")
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); Application.EnableVisualStyles();

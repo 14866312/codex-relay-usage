@@ -123,7 +123,7 @@ internal static class LiveUsageTests
             afterRewrite.TotalTokens == 210 && !ReferenceEquals(beforeRewrite, afterRewrite));
         Append(Legacy(U(300)));
         using var cancelled = new CancellationTokenSource();
-        try { reader.Read(cancelled.Cancel, cancelled.Token); } catch (OperationCanceledException) { }
+        try { reader.Read(cancelled.Cancel, cancellationToken: cancelled.Token); } catch (OperationCanceledException) { }
         check("cancelled EOF read cannot return a previously cached snapshot",
             reader.ReadOffset == new FileInfo(path).Length && reader.Read()!.TotalTokens == 310);
     }

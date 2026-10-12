@@ -3,7 +3,8 @@ using System.Text.Json;
 
 namespace CodexTokenOverlay;
 
-internal sealed record SessionEntry(string ThreadId, string LogPath, DateTime WriteUtc, long Length, string? Cwd, string? Title);
+internal sealed record SessionEntry(string ThreadId, string LogPath, DateTime WriteUtc, long Length, string? Cwd, string? Title,
+    SessionRelationInfo? Relation = null);
 
 internal sealed class TokenLogMonitor : IDisposable
 {
@@ -14,8 +15,15 @@ internal sealed class TokenLogMonitor : IDisposable
     private string? _preferred, _pinnedId, _activeId;
     private bool _pinned;
     internal const int ReaderCacheCapacity = 8;
+    // Related members keep their own readers so a group larger than the selection cache
+    // never restarts from byte zero; the group monitor releases members it dropped.
+    // Root plus the documented 32-member target must survive a refresh without restarting.
+    internal const int MemberReaderCapacity = 64;
     private readonly Dictionary<string, IncrementalSessionReader> _readers = new(StringComparer.OrdinalIgnoreCase);
     private readonly LinkedList<string> _readerOrder = new();
+    private readonly Dictionary<string, IncrementalSessionReader> _memberReaders = new(StringComparer.OrdinalIgnoreCase);
+    private readonly LinkedList<string> _memberOrder = new();
+    private RelatedSessionCatalogSnapshot _relations = RelatedSessionCatalogSnapshot.Empty;
     private long _version;
     private int _dirty = 1;
     private DateTime _lastScan;
@@ -31,6 +39,16 @@ internal sealed class TokenLogMonitor : IDisposable
     public string SessionRoot { get { lock (_sync) return _root; } }
     public long ActiveSessionVersion { get { lock (_sync) return _version; } }
     public string? ActiveThreadId { get { lock (_sync) return _activeId; } }
+    public RelatedSessionCatalogSnapshot Relations { get { lock (_sync) return _relations; } }
+    // Refreshes the catalog only when the directory changed or the scan went stale.
+    internal RelatedSessionCatalogSnapshot RefreshRelations(CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (Interlocked.Exchange(ref _dirty, 0) != 0 || DateTime.UtcNow - _lastScan >= TimeSpan.FromSeconds(1)) Scan(cancellationToken);
+            return _relations;
+        }
+    }
     public string? PreferredThreadId { get { lock (_sync) return _preferred; } set { lock (_sync) _preferred = CleanId(value); } }
     public bool PinActiveSession
     {
@@ -50,7 +68,9 @@ internal sealed class TokenLogMonitor : IDisposable
             _root = normalized;
             foreach (var watcher in _watchers) watcher.Dispose();
             foreach (var cached in _readers.Values) cached.Dispose();
+            foreach (var cached in _memberReaders.Values) cached.Dispose();
             _watchers.Clear(); _catalog.Clear(); _readers.Clear(); _readerOrder.Clear(); _version++; _lastScan = default;
+            _memberReaders.Clear(); _memberOrder.Clear(); _relations = RelatedSessionCatalogSnapshot.Empty;
             Interlocked.Exchange(ref _dirty, 1); CreateWatchers();
         }
     }
@@ -133,7 +153,8 @@ internal sealed class TokenLogMonitor : IDisposable
                         var id = IncrementalSessionReader.String(meta, "id");
                         if (string.IsNullOrWhiteSpace(id)) continue;
                         var entry = new SessionEntry(id, path, file.LastWriteTimeUtc, file.Length,
-                            IncrementalSessionReader.String(meta, "cwd"), titles.GetValueOrDefault(id));
+                            IncrementalSessionReader.String(meta, "cwd"), titles.GetValueOrDefault(id),
+                            SessionRelationInfo.Parse(id, meta));
                         // One copy per thread. Pick the newest complete file; never add archive + active.
                         if (!next.TryGetValue(id, out var previous) || entry.WriteUtc > previous.WriteUtc ||
                             (entry.WriteUtc == previous.WriteUtc && entry.Length > previous.Length)) next[id] = entry;
@@ -144,6 +165,7 @@ internal sealed class TokenLogMonitor : IDisposable
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { LastError = "日志目录暂时无法读取"; }
         }
         _catalog = next; _lastScan = DateTime.UtcNow;
+        _relations = RelatedSessionCatalog.Build(next.Values, _relations);
         CreateWatchers();
     }
     private Dictionary<string, string> ReadTitles(CancellationToken cancellationToken)
@@ -197,6 +219,46 @@ internal sealed class TokenLogMonitor : IDisposable
     }
     internal long? ReaderBytesRead(string threadId)
     { lock (_sync) return _readers.TryGetValue(threadId, out var reader) ? reader.TotalBytesRead : null; }
+    internal long? MemberBytesRead(string threadId)
+    { lock (_sync) return _memberReaders.TryGetValue(threadId, out var reader) ? reader.TotalBytesRead : null; }
+
+    // Reads one related member incrementally with a byte budget, so a large member log is
+    // consumed in bounded slices and never blocks the main conversation's publication.
+    public (TokenSnapshot? Snapshot, string? Error) PollMember(string threadId, int byteBudget, CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (_disposed) return (null, null);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Interlocked.Exchange(ref _dirty, 0) != 0 || DateTime.UtcNow - _lastScan >= TimeSpan.FromSeconds(1)) Scan(cancellationToken);
+            if (!_catalog.TryGetValue(threadId, out var entry)) return (null, "成员日志尚未出现");
+            if (!_memberReaders.TryGetValue(threadId, out var reader) || !string.Equals(reader.Path, entry.LogPath, StringComparison.OrdinalIgnoreCase))
+                _memberReaders[threadId] = reader = new IncrementalSessionReader(entry.LogPath, threadId);
+            _memberOrder.Remove(threadId); _memberOrder.AddLast(threadId);
+            while (_memberReaders.Count > MemberReaderCapacity)
+            {
+                _memberReaders.Remove(_memberOrder.First!.Value, out var evicted);
+                _memberOrder.RemoveFirst();
+                evicted?.Dispose();
+            }
+            try { return (reader.Read(cancellationToken: cancellationToken, byteBudget: byteBudget), null); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            { return (reader.Snapshot, "成员日志暂时无法读取"); }
+        }
+    }
+
+    // Drops readers for members that left the group; their positions are rebuilt on return.
+    internal void ReleaseMembers(IReadOnlyCollection<string> keep)
+    {
+        lock (_sync)
+        {
+            foreach (var id in _memberReaders.Keys.Where(id => !keep.Contains(id, StringComparer.OrdinalIgnoreCase)).ToArray())
+            {
+                _memberReaders.Remove(id, out var reader);
+                reader?.Dispose(); _memberOrder.Remove(id);
+            }
+        }
+    }
     public void Dispose()
     {
         lock (_sync)
@@ -204,7 +266,9 @@ internal sealed class TokenLogMonitor : IDisposable
             _disposed = true;
             foreach (var watcher in _watchers) watcher.Dispose();
             foreach (var cached in _readers.Values) cached.Dispose();
+            foreach (var cached in _memberReaders.Values) cached.Dispose();
             _readers.Clear(); _readerOrder.Clear(); _watchers.Clear();
+            _memberReaders.Clear(); _memberOrder.Clear();
         }
     }
 }
@@ -238,7 +302,9 @@ internal sealed class IncrementalSessionReader(string path, string threadId) : I
     // must release it rather than waiting for a finalizer that never runs.
     public void Dispose() => _partial.Dispose();
 
-    public TokenSnapshot? Read(Action? blockProcessed = null, CancellationToken cancellationToken = default)
+    // byteBudget stops the read at a complete line boundary so a caller can consume a large
+    // member log in bounded slices; 0 reads to the current end of file.
+    public TokenSnapshot? Read(Action? blockProcessed = null, int byteBudget = 0, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var info = new FileInfo(Path);
@@ -251,6 +317,7 @@ internal sealed class IncrementalSessionReader(string path, string threadId) : I
         _writeUtc = info.LastWriteTimeUtc; _creationUtc = info.CreationTimeUtc; _knownLength = stream.Length;
         if (_offset == stream.Length && _snapshotOffset == _offset && Snapshot is not null) return Snapshot;
         var buffer = _buffer ??= new byte[64 * 1024];
+        var budgetStart = TotalBytesRead;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -268,8 +335,12 @@ internal sealed class IncrementalSessionReader(string path, string threadId) : I
             // Offset and partial-line state advance together, only between complete blocks.
             _offset += count; TotalBytesRead += count;
             blockProcessed?.Invoke();
+            // The budget is checked between whole blocks, never mid-chunk, so the resume
+            // offset always lands on data the reader has actually consumed.
+            if (byteBudget > 0 && TotalBytesRead - budgetStart >= byteBudget) break;
         }
         info.Refresh(); _writeUtc = info.LastWriteTimeUtc; _creationUtc = info.CreationTimeUtc; _knownLength = stream.Length;
+        var moreDataPending = _offset < stream.Length;
         var ledger = _ledger.Snapshot();
         var live = _liveUsage.Select(new(_input, _cache, null, _output, _reasoning, _total, _parseIssue), _usageRecorded);
         var issues = new[] { _parseIssue, _liveUsage.Issue }.OfType<string>().Concat(ledger.Issues).Distinct().ToArray();
@@ -280,7 +351,8 @@ internal sealed class IncrementalSessionReader(string path, string threadId) : I
             issues.Length == 0 ? live?.ParseIssue : string.Join("；", issues), _usageRecorded || live is not null,
             live is null ? _totalTokenInvalid : live.ParseIssue?.Contains("total_tokens", StringComparison.Ordinal) == true, ledger,
             _runningTurns.Count > 0, _liveUsage.Source, OutputSpeed,
-            SpeedGenerationOnly, _generationSeconds > 0 ? _generationSeconds : null, _toolSeconds > 0 ? _toolSeconds : null);
+            SpeedGenerationOnly, _generationSeconds > 0 ? _generationSeconds : null, _toolSeconds > 0 ? _toolSeconds : null,
+            moreDataPending);
         _snapshotOffset = _offset;
         return Snapshot;
     }

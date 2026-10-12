@@ -191,7 +191,7 @@ internal static class SessionCostTests
         check("log truncation replaces ledger and clears fee", snapshot.Ledger!.LedgerId != oldId && calculator.Calculate(snapshot.Ledger, prices).Status == SessionCostStatus.Waiting);
         File.WriteAllText(path, start + string.Concat(Enumerable.Repeat(sample, 250)), encoding);
         var reader = new IncrementalSessionReader(path, "test"); using var cancellation = new CancellationTokenSource(); var didCancel = false;
-        try { reader.Read(() => cancellation.Cancel(), cancellation.Token); } catch (OperationCanceledException) { didCancel = true; }
+        try { reader.Read(() => cancellation.Cancel(), cancellationToken: cancellation.Token); } catch (OperationCanceledException) { didCancel = true; }
         var resumed = reader.Read();
         check("canceled incremental read resumes with dedup intact", didCancel && resumed!.Ledger!.Calls.Count == 1 &&
             calculator.Calculate(resumed.Ledger, prices).Amounts?.Total == .06725985m);

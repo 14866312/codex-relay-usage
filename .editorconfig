@@ -42,3 +42,8 @@ dotnet_diagnostic.CA1838.severity = none
 [src/CodexTokenOverlay/DebugRouteTests.cs]
 dotnet_diagnostic.CA5350.severity = none
 
+# Same RFC 6455 handshake fixture as DebugRouteTests: the runtime-usage transport
+# check starts a loopback page that is a test server, not a security boundary.
+[src/CodexTokenOverlay/RelatedUsageTests.cs]
+dotnet_diagnostic.CA5350.severity = none
+

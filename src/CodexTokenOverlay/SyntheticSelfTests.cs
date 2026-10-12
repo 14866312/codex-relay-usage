@@ -263,6 +263,7 @@ internal static class SyntheticSelfTests
             DebugRouteTests.Run(Check);
             SessionCostTests.Run(Check, directory);
             LiveUsageTests.Run(Check, directory);
+            RelatedUsageTests.Run(Check, directory);
             foreach (var dpi in new uint[] { 96, 120, 144, 192 })
             foreach (var scale in new[] { 60, 100, 130 })
             {

@@ -9,7 +9,8 @@ internal sealed record TokenSnapshot(
     string? Model = null, int? TurnCount = null, string? ParseIssue = null,
     bool UsageRecorded = true, bool TotalTokenInvalid = false, UsageLedgerSnapshot? Ledger = null,
     bool TurnInProgress = false, string? UsageSource = null, double? OutputSpeed = null,
-    bool SpeedGenerationOnly = false, double? GenerationSeconds = null, double? ToolSeconds = null)
+    bool SpeedGenerationOnly = false, double? GenerationSeconds = null, double? ToolSeconds = null,
+    bool MoreDataPending = false)
 {
     public static bool Valid(long? value) => value is >= 0;
     public bool CacheIsValid => Valid(InputTokens) && Valid(CachedInputTokens) && CachedInputTokens <= InputTokens;
