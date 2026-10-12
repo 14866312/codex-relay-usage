@@ -8,24 +8,27 @@ internal static class ConversationSwitchTests
     internal static void Run(Action<string, bool> check, string temporaryDirectory)
     {
         var titles = new Dictionary<string, string> { ["a"] = "中文对话 A", ["b"] = "中文对话 B" };
+        var resolver = new SidebarSessionResolver();
+        var noProjects = new LocalProjectIndex();
         check("actual visible title overrides unrelated retained subscriptions",
-            SessionTitleIndex.Resolve(new(1, "中文对话 A"), titles) == "a");
+            resolver.Resolve(new(1, "中文对话 A"), titles, noProjects).ThreadId == "a");
         check("visible idle page resolves without a subscription event",
-            SessionTitleIndex.Resolve(new(1, "中文对话 B"), titles) == "b");
+            resolver.Resolve(new(1, "中文对话 B"), titles, noProjects).ThreadId == "b");
         titles["duplicate"] = "中文对话 A";
-        check("duplicate visible titles fail closed", SessionTitleIndex.Resolve(new(1, "中文对话 A"), titles) is null);
-        check("title matching is exact", SessionTitleIndex.Resolve(new(1, "中文对话 B…"), titles) is null);
+        check("duplicate visible titles fail closed",
+            resolver.Resolve(new(1, "中文对话 A"), titles, noProjects) is { ThreadId: null, SameTitleAmbiguous: true });
+        check("title matching is exact", resolver.Resolve(new(1, "中文对话 B…"), titles, noProjects).ThreadId is null);
         check("home and unindexed pages do not retain a conversation",
-            SessionTitleIndex.Resolve(new(1, "Codex"), titles) is null &&
-            SessionTitleIndex.Resolve(new(1, "ChatGPT"), titles) is null &&
-            SessionTitleIndex.Resolve(new(1, "unknown"), titles) is null);
+            resolver.Resolve(new(1, "Codex"), titles, noProjects).ThreadId is null &&
+            resolver.Resolve(new(1, "ChatGPT"), titles, noProjects).ThreadId is null &&
+            resolver.Resolve(new(1, "unknown"), titles, noProjects).ThreadId is null);
         check("window ambiguity and accessibility errors clear identity",
-            SessionTitleIndex.Resolve(new(2, "中文对话 B"), titles) is null &&
-            SessionTitleIndex.Resolve(new(0, "中文对话 B"), titles) is null &&
-            SessionTitleIndex.Resolve(new(1, "中文对话 B", Error: "unavailable"), titles) is null);
+            resolver.Resolve(new(2, "中文对话 B"), titles, noProjects).ThreadId is null &&
+            resolver.Resolve(new(0, "中文对话 B"), titles, noProjects).ThreadId is null &&
+            resolver.Resolve(new(1, "中文对话 B", Error: "unavailable"), titles, noProjects).ThreadId is null);
         const string uuid = "11111111-2222-4333-8444-555555555555";
         check("explicit document route bypasses duplicate title matching",
-            SessionTitleIndex.Resolve(new(1, "中文对话 A", uuid), titles) == uuid);
+            resolver.Resolve(new(1, "中文对话 A", uuid), titles, noProjects) is { ThreadId: uuid, Method: "页面路由" });
         check("document route accepts only validated thread identifiers",
             CodexViewIdentityReader.ThreadIdFromUrl("app://-/threads/" + uuid) == uuid &&
             CodexViewIdentityReader.ThreadIdFromUrl("app://-/thread/" + uuid) == uuid &&
@@ -38,20 +41,29 @@ internal static class ConversationSwitchTests
         Directory.CreateDirectory(sessions); Directory.CreateDirectory(Path.Combine(home, "archived_sessions"));
         var indexPath = Path.Combine(home, "session_index.jsonl");
         var index = new SessionTitleIndex(); index.SetRoot(home); index.Refresh();
-        check("missing title index cannot invent an identity", index.Resolve(new(1, "中文对话 A")) is null && index.Error is not null);
+        check("missing title index cannot invent an identity", index.Titles.Count == 0 && index.Error is not null);
         string Title(string id, string title) => JsonSerializer.Serialize(new { id, thread_name = title }) + '\n';
-        File.WriteAllText(indexPath, Title("a", "旧标题") + Title("b", "中文对话 B") + Title("a", "中文对话 A"));
+        File.WriteAllText(indexPath, Title("a", "旧标题") + "{broken" + '\n' +
+            JsonSerializer.Serialize(new { id = "blank", thread_name = "   " }) + '\n' +
+            Title("b", "中文对话 B") + Title("a", "中文对话 A"));
         index.SetRoot(sessions); index.Refresh();
-        check("latest rename resolves via home or sessions root", index.Resolve(new(1, "中文对话 A")) == "a" && index.Resolve(new(1, "旧标题")) is null);
+        check("latest rename wins and bad or blank rows stay out",
+            index.Titles.GetValueOrDefault("a") == "中文对话 A" && !index.Titles.ContainsKey("blank") &&
+            !index.Titles.Values.Contains("旧标题") && index.Error is null);
         var rename = Title("b", "新标题 B"); var split = rename.Length / 2;
         File.AppendAllText(indexPath, rename[..split]); index.Refresh();
-        check("half-written title row retains previous complete titles", index.Resolve(new(1, "中文对话 B")) == "b");
+        check("half-written title row retains previous complete titles", index.Titles.GetValueOrDefault("b") == "中文对话 B");
         File.AppendAllText(indexPath, rename[split..]); index.Refresh();
-        check("completed title rename updates without restarting", index.Resolve(new(1, "新标题 B")) == "b" && index.Resolve(new(1, "中文对话 B")) is null);
+        check("completed title rename updates without restarting",
+            index.Titles.GetValueOrDefault("b") == "新标题 B" && !index.Titles.Values.Contains("中文对话 B"));
+        var cachedTitles = index.Titles; var size = (int)new FileInfo(indexPath).Length; var stamp = File.GetLastWriteTimeUtc(indexPath);
+        File.WriteAllText(indexPath, new string(' ', size));
+        File.SetLastWriteTimeUtc(indexPath, stamp); index.Refresh();
+        check("unchanged length and timestamp reuse the cached titles", ReferenceEquals(cachedTitles, index.Titles));
         File.Delete(indexPath); index.Refresh();
-        check("deleted index clears previously cached mappings", index.Resolve(new(1, "中文对话 A")) is null);
+        check("deleted index clears previously cached mappings", index.Titles.Count == 0);
         File.WriteAllText(indexPath, Title("a", "新索引 A")); index.Refresh();
-        check("recreated index can recover automatically", index.Resolve(new(1, "新索引 A")) == "a");
+        check("recreated index can recover automatically", index.Titles.GetValueOrDefault("a") == "新索引 A");
 
         var selection = new SessionSelection();
         var route = new ActiveThreadRouteStatus("a", 1, true, 1, null);

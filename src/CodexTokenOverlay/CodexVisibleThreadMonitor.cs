@@ -180,16 +180,6 @@ internal sealed class SessionTitleIndex
         }
     }
 
-    public string? Resolve(CodexViewIdentity view) => Resolve(view, _titlesById);
-    internal static string? Resolve(CodexViewIdentity view, IReadOnlyDictionary<string, string> titles)
-    {
-        if (view.WindowCount != 1 || view.Error is not null) return null;
-        if (view.ThreadId is not null) return view.ThreadId;
-        if (string.IsNullOrWhiteSpace(view.Title) || view.Title is "Codex" or "ChatGPT") return null;
-        var ids = titles.Where(pair => string.Equals(pair.Value, view.Title, StringComparison.Ordinal))
-            .Select(pair => pair.Key).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
-        return ids.Length == 1 ? ids[0] : null;
-    }
 }
 
 internal sealed class CodexVisibleThreadMonitor : IDisposable

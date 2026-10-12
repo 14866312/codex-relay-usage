@@ -21,6 +21,7 @@ internal sealed class TokenLogMonitor : IDisposable
     private readonly LinkedList<string> _readerOrder = new();
     private readonly Dictionary<string, IncrementalSessionReader> _memberReaders = new(StringComparer.OrdinalIgnoreCase);
     private readonly LinkedList<string> _memberOrder = new();
+    private readonly SessionTitleIndex _titles = new();
     private RelatedSessionCatalogSnapshot _relations = RelatedSessionCatalogSnapshot.Empty;
     private int _dirty = 1;
     private DateTime _lastScan;
@@ -31,6 +32,7 @@ internal sealed class TokenLogMonitor : IDisposable
     public TokenLogMonitor(string? sessionRoot = null)
     {
         _root = NormalizeRoot(sessionRoot ?? SessionPathResolver.Resolve());
+        _titles.SetRoot(_root);
         CreateWatchers();
     }
     public string SessionRoot { get { lock (_sync) return _root; } }
@@ -51,6 +53,7 @@ internal sealed class TokenLogMonitor : IDisposable
             var normalized = NormalizeRoot(root);
             if (string.Equals(_root, normalized, StringComparison.OrdinalIgnoreCase)) return;
             _root = normalized;
+            _titles.SetRoot(normalized);
             foreach (var watcher in _watchers) watcher.Dispose();
             foreach (var cached in _readers.Values) cached.Dispose();
             foreach (var cached in _memberReaders.Values) cached.Dispose();
@@ -111,7 +114,7 @@ internal sealed class TokenLogMonitor : IDisposable
     {
         var next = new Dictionary<string, SessionEntry>(StringComparer.OrdinalIgnoreCase);
         cancellationToken.ThrowIfCancellationRequested();
-        var titles = ReadTitles(cancellationToken);
+        _titles.Refresh(cancellationToken);
         LastError = null;
         foreach (var root in Roots())
         {
@@ -138,7 +141,7 @@ internal sealed class TokenLogMonitor : IDisposable
                         var id = IncrementalSessionReader.String(meta, "id");
                         if (string.IsNullOrWhiteSpace(id)) continue;
                         var entry = new SessionEntry(id, path, file.LastWriteTimeUtc, file.Length,
-                            IncrementalSessionReader.String(meta, "cwd"), titles.GetValueOrDefault(id),
+                            IncrementalSessionReader.String(meta, "cwd"), _titles.Titles.GetValueOrDefault(id),
                             SessionRelationInfo.Parse(id, meta));
                         // One copy per thread. Pick the newest complete file; never add archive + active.
                         if (!next.TryGetValue(id, out var previous) || entry.WriteUtc > previous.WriteUtc ||
@@ -152,25 +155,6 @@ internal sealed class TokenLogMonitor : IDisposable
         _catalog = next; _lastScan = DateTime.UtcNow;
         _relations = RelatedSessionCatalog.Build(next.Values, _relations);
         CreateWatchers();
-    }
-    private Dictionary<string, string> ReadTitles(CancellationToken cancellationToken)
-    {
-        var titles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            var path = Path.Combine(Path.GetDirectoryName(_root)!, "session_index.jsonl");
-            if (!File.Exists(path)) return titles;
-            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(file);
-            while (reader.ReadLine() is { } line)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                try { using var doc = JsonDocument.Parse(line); var id = IncrementalSessionReader.String(doc.RootElement, "id");
-                    var title = IncrementalSessionReader.String(doc.RootElement, "thread_name");
-                    if (id is not null && title is not null) titles[id] = title; } catch (JsonException) { }
-            }
-        } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-        return titles;
     }
     // Reads exactly the given session; a null id keeps returning the empty result an
     // unselected monitor used to give. Which session that is lives in SessionSelection.
