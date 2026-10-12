@@ -127,6 +127,59 @@ internal static class DiagnosticsRunner
             context.RenderTrayPreviews(directory);
         }
         finally { Directory.Delete(isolated, true); }
+        RenderWaitingPreviews(directory);
+    }
+
+    // The strip clears numbers immediately but words the wait in three stages; the
+    // rendered capsules are the user-visible evidence for that behavior.
+    private static void RenderWaitingPreviews(string directory)
+    {
+        var settings = OverlaySettings.CreateDefault();
+        var stages = new[] { PageWaitStage.Reading, PageWaitStage.NotReady, PageWaitStage.LongWait };
+        var labels = new[] { "不足 3 秒 · 正在读取当前对话…", "达到 3 秒 · 当前页面尚未就绪", "达到 60 秒 · 等待较久，可尝试重启 Codex" };
+        foreach (var theme in new[] { OverlayThemeKind.Light, OverlayThemeKind.Dark })
+        {
+            var frames = new List<Bitmap>();
+            try
+            {
+                foreach (var stage in stages)
+                {
+                    using var form = new TokenStripForm();
+                    var presentation = OverlayPresentationBuilder.CreateWaiting(PageWaitRules.Text(stage)!, DisplayField.Total,
+                        DisplayField.CacheHitRate, settings.VisibleFields);
+                    form.SetPresentation(presentation);
+                    form.ApplyTheme(OverlayThemePalette.For(theme));
+                    var host = TitleBarPlacementTests.Host((uint)form.DeviceDpi);
+                    var layout = OverlayLayoutCalculator.Calculate(new(host, settings.AnchorMode, false, presentation.ExpandedRows.Count, true));
+                    form.ApplyLayout(layout);
+                    using var bitmap = new Bitmap(layout.WindowBounds.Width, layout.WindowBounds.Height);
+                    form.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
+                    var shaped = new Bitmap(bitmap.Width, bitmap.Height);
+                    using (var clip = Graphics.FromImage(shaped))
+                    {
+                        clip.Clear(Color.Transparent);
+                        if (form.Region is not null) clip.Clip = form.Region;
+                        clip.DrawImageUnscaled(bitmap, 0, 0);
+                    }
+                    frames.Add(shaped);
+                }
+                const int padding = 24, labelHeight = 28;
+                var width = frames.Max(f => f.Width) + padding * 2;
+                var rowHeight = frames.Max(f => f.Height) + padding + labelHeight;
+                using var canvas = new Bitmap(width, rowHeight * frames.Count + padding);
+                using var graphics = Graphics.FromImage(canvas);
+                graphics.Clear(OverlayThemePalette.For(theme).ToolbarSurface);
+                using var font = new Font("Microsoft YaHei UI", 10, GraphicsUnit.Point);
+                using var brush = new SolidBrush(OverlayThemePalette.For(theme).Label);
+                for (var i = 0; i < frames.Count; i++)
+                {
+                    graphics.DrawString(labels[i], font, brush, padding, padding + rowHeight * i);
+                    graphics.DrawImageUnscaled(frames[i], padding, padding + rowHeight * i + labelHeight);
+                }
+                canvas.Save(Path.Combine(directory, theme.ToString().ToLowerInvariant() + "-waiting-stages.png"), ImageFormat.Png);
+            }
+            finally { foreach (var frame in frames) frame.Dispose(); }
+        }
     }
     internal static CodexWindowInfo Host(uint dpi) => new(new IntPtr(123), new(0, 0, 1400, 1000), new(0, 0, 1400, 1000),
         null, new(0, 0, 3000, 2000), dpi, new(46, 30, 8, 8, 4));

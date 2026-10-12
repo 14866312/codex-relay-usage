@@ -43,6 +43,8 @@ dotnet publish .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release -r wi
 
 需要采集 Codex 启动后的“页面就绪”时间线时，用 `--view-probe out.jsonl 2000` 连续采样（每 150 ms 一行），以 `Error` 从 `当前页面尚未就绪` 变为识别结果的时间点为恢复时刻；本机复现记录见 [codex-integration.md](codex-integration.md)。
 
+页面等待与绑定恢复的合成检查在 `--self-test` 中：注入单调时钟的等待起点、窗口生命周期重建与日志目录变化重新计时；0.2 秒／2 秒空窗与 3 秒／60 秒阈值及三档文案；首次待就绪立即清空 Token／费用／关联用量并拒绝迟到结果；阻塞超时与调试连接断开的即时规则；手动锁定不受等待阶段影响；短空窗绑定恢复与节点重建、宽限期到期、文档变化时的丢弃。检查使用合成视图与注入时钟，不依赖个人 Codex 会话。
+
 这些输出含个人会话标识与元数据，留在本机，不加入源码或公开发布。
 
 ## 交付验证记录与归档

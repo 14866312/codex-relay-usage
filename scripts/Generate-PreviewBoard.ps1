@@ -4,7 +4,7 @@ Add-Type -AssemblyName System.Drawing
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 if (-not $PreviewDirectory) { $PreviewDirectory = Join-Path $repositoryRoot 'previews' }
 $PreviewDirectory = [IO.Path]::GetFullPath($PreviewDirectory)
-$canvas = [Drawing.Bitmap]::new(2440, 3700)
+$canvas = [Drawing.Bitmap]::new(2440, 4250)
 $graphics = [Drawing.Graphics]::FromImage($canvas)
 $titleFont = [Drawing.Font]::new('Microsoft YaHei UI', 34, [Drawing.FontStyle]::Bold, [Drawing.GraphicsUnit]::Pixel)
 $sectionFont = [Drawing.Font]::new('Microsoft YaHei UI', 24, [Drawing.FontStyle]::Bold, [Drawing.GraphicsUnit]::Pixel)
@@ -73,7 +73,11 @@ try {
     Draw-Preview 'cost-related.png' 64 3241 1112 330
     Draw-Card '关联用量 · 深色主题' 1240 3175 1160 420
     Draw-Preview 'cost-related-dark.png' 1264 3241 1112 330
-    $graphics.DrawString('全部预览来自程序真实窗体，使用合成数据；费用金额显示三位小数。', $noteFont, $muted, [single]40, [single]3630)
+    Draw-Card '页面等待 · 数字立即清空，文案分档显示' 40 3635 1160 500
+    Draw-Preview 'light-waiting-stages.png' 64 3701 1112 410
+    Draw-Card '页面等待 · 深色主题' 1240 3635 1160 500
+    Draw-Preview 'dark-waiting-stages.png' 1264 3701 1112 410
+    $graphics.DrawString('全部预览来自程序真实窗体，使用合成数据；费用金额显示三位小数。', $noteFont, $muted, [single]40, [single]4180)
     $canvas.Save((Join-Path $PreviewDirectory 'overview.png'), [Drawing.Imaging.ImageFormat]::Png)
 } finally {
     foreach ($resource in @($graphics, $canvas, $titleFont, $sectionFont, $noteFont, $ink, $muted, $surface, $border)) { $resource.Dispose() }

@@ -7,7 +7,7 @@ using Accessibility;
 namespace CodexTokenOverlay;
 
 internal sealed record CodexViewIdentity(int WindowCount, string? Title, string? ThreadId = null, string? Error = null,
-    string? DocumentKey = null, SidebarViewIdentity? Sidebar = null);
+    string? DocumentKey = null, SidebarViewIdentity? Sidebar = null, string? Lifecycle = null);
 
 // Stream subscriptions survive navigation. Only the actual Codex document identifies the visible page.
 internal static class CodexViewIdentityReader
@@ -25,11 +25,14 @@ internal static class CodexViewIdentityReader
 
     internal static CodexViewIdentity ReadWindow(IntPtr handle, CodexSidebarAccessibility? sidebar = null)
     {
+        // The window lifetime is knowable even while the accessibility tree is still
+        // empty, so a pending page can be tied to the window it appeared in.
+        var lifecycle = WindowLifecycle(handle);
         try
         {
             var iid = AccessibleInterface;
             if (AccessibleObjectFromWindow(handle, 0xFFFFFFFC, ref iid, out var root) < 0 || root is not IAccessible accessible)
-                return new(1, null, Error: "无法读取当前页面");
+                return new(1, null, Error: "无法读取当前页面", Lifecycle: lifecycle);
             var queue = new Queue<(IAccessible Node, int Depth)>();
             var visited = new HashSet<object>();
             var documents = new List<(IAccessible Node, string? Url)>();
@@ -58,22 +61,35 @@ internal static class CodexViewIdentityReader
             if (documents.Count != 1)
             {
                 sidebar?.Reset();
-                return new(1, null, Error: DocumentReadError(documents.Count, unpopulatedDocuments));
+                return new(1, null, Error: DocumentReadError(documents.Count, unpopulatedDocuments), Lifecycle: lifecycle);
             }
             var document = documents[0];
             var title = document.Node.get_accName(0);
             using var metadata = new AccessibleMetadata(document.Node);
-            _ = GetWindowThreadProcessId(handle, out var pid);
-            long lifetime;
-            using (var process = Process.GetProcessById((int)pid)) lifetime = process.StartTime.ToUniversalTime().Ticks;
-            var owner = metadata.UniqueId() is { } id ? $"{handle.ToInt64()}/{pid}/{lifetime}/{id}" : null;
+            var owner = metadata.UniqueId() is { } id ? $"{lifecycle}/{id}" : null;
             var rows = owner is null ? null : sidebar?.Read(document.Node, owner, title);
-            return new(1, title, ThreadIdFromUrl(document.Url), DocumentKey: owner, Sidebar: rows);
+            return new(1, title, ThreadIdFromUrl(document.Url), DocumentKey: owner, Sidebar: rows, Lifecycle: lifecycle);
         }
         catch (Exception e) when (e is COMException or InvalidCastException or InvalidOperationException or UnauthorizedAccessException or ArgumentException or System.ComponentModel.Win32Exception)
         {
             sidebar?.Reset();
-            return new(1, null, Error: "当前页面暂时无法读取");
+            return new(1, null, Error: "当前页面暂时无法读取", Lifecycle: lifecycle);
+        }
+    }
+
+    // Handle, process and process start time identify one window lifetime; the document
+    // unique ID is appended once a document exists.
+    private static string? WindowLifecycle(IntPtr handle)
+    {
+        try
+        {
+            _ = GetWindowThreadProcessId(handle, out var pid);
+            using var process = Process.GetProcessById((int)pid);
+            return $"{handle.ToInt64()}/{pid}/{process.StartTime.ToUniversalTime().Ticks}";
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null;
         }
     }
 
@@ -81,11 +97,14 @@ internal static class CodexViewIdentityReader
         (uri.Scheme == "app" || uri.Scheme == "file");
 
     // Codex exposes its Chromium document before the lazily built accessibility tree
-    // fills in the URL, name and children. That pending page is not an ambiguous one:
-    // there is no duplicate-title problem, and a later read resolves it without user
-    // action. Keep the ambiguity error for walks that actually saw candidate documents.
+    // fills in the URL. The pending classification only needs an empty-URL document
+    // while no document carries a usable URL; the name and children are not part of
+    // the trigger. That pending page is not an ambiguous one: there is no
+    // duplicate-title problem, and a later read resolves it without user action. Keep
+    // the ambiguity error for walks that actually saw candidate documents.
+    internal const string PagePendingError = "当前页面尚未就绪";
     internal static string DocumentReadError(int identifiedDocuments, int unpopulatedDocuments) =>
-        identifiedDocuments == 0 && unpopulatedDocuments > 0 ? "当前页面尚未就绪" : "无法唯一识别当前页面";
+        identifiedDocuments == 0 && unpopulatedDocuments > 0 ? PagePendingError : "无法唯一识别当前页面";
 
     internal static string? ThreadIdFromUrl(string? value)
     {
@@ -189,6 +208,7 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
     private readonly Func<CodexViewIdentity>? _readViewOverride;
     private readonly Func<CodexViewIdentity, CancellationToken, CopiedConversationLink> _copyLink;
     private readonly TimeSpan _identifyTimeout;
+    private readonly Func<long> _clock;
     private ActiveThreadRouteStatus _status = new(null, 0, false, 0, null);
     private string _root;
     private long _rootRevision;
@@ -200,11 +220,13 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
     public event Action? StatusChanged;
 
     public CodexVisibleThreadMonitor(string root, Func<CodexViewIdentity>? readView = null,
-        Func<CodexViewIdentity, CancellationToken, CopiedConversationLink>? copyLink = null, TimeSpan? identifyTimeout = null)
+        Func<CodexViewIdentity, CancellationToken, CopiedConversationLink>? copyLink = null, TimeSpan? identifyTimeout = null,
+        Func<long>? clock = null)
     {
         _root = root;
         _readViewOverride = readView; _copyLink = copyLink ?? CurrentConversationLink.Read;
         _identifyTimeout = identifyTimeout ?? TimeSpan.FromSeconds(6);
+        _clock = clock ?? Stopwatch.GetTimestamp;
         _runner = new Thread(Run) { IsBackground = true, Name = "Codex visible conversation" };
         _runner.SetApartmentState(ApartmentState.STA);
         _runner.Start();
@@ -217,7 +239,7 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
             var identifyingEmptyPage = _identifyRequest is { Started: true } && _status.ThreadId is null;
             if (!identifyingEmptyPage && _status.ActiveWindowCount > 0 && Stopwatch.GetElapsedTime(_lastReadTimestamp) > TimeSpan.FromSeconds(1) &&
                 (_status.ThreadId is not null || _status.LastError != "当前页面读取超时"))
-                _status = _status with { ThreadId = null, LastError = "当前页面读取超时", Version = _status.Version + 1 };
+                _status = _status with { ThreadId = null, LastError = "当前页面读取超时", Version = _status.Version + 1, PagePendingSince = 0 };
             return _status;
         }
     }
@@ -233,7 +255,7 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
             if (string.Equals(_root, root, StringComparison.OrdinalIgnoreCase)) return;
             CancelIdentify("日志目录已变化，请重新点击识别");
             _root = root; _rootRevision++; _view = null;
-            _status = _status with { ThreadId = null, Version = _status.Version + 1 };
+            _status = _status with { ThreadId = null, Version = _status.Version + 1, PagePendingSince = 0 };
         }
         _wake.Set();
     }
@@ -313,6 +335,25 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
         next = next with { Version = previous.Version };
         return next == previous ? previous : next with { Version = previous.Version + 1 };
     }
+    // The wait for a pending page starts on the first pending read and survives
+    // unchanged sampling, so the strip can show how long the page has been waiting.
+    // A different window lifetime, a different error kind or a log-directory change
+    // restarts it. The clock is monotonic; tests inject a synthetic one.
+    internal static ActiveThreadRouteStatus TrackPage(ActiveThreadRouteStatus previous, ActiveThreadRouteStatus next,
+        string? lifecycle, long now)
+    {
+        var observed = lifecycle ?? previous.PageLifecycle;
+        var generation = lifecycle is not null && lifecycle != previous.PageLifecycle ? previous.PageGeneration + 1 : previous.PageGeneration;
+        var pending = next.ActiveWindowCount == 1 && next.LastError == CodexViewIdentityReader.PagePendingError;
+        var continuing = previous.PagePendingSince != 0 && previous.PageLifecycle == observed
+            && previous.LastError == CodexViewIdentityReader.PagePendingError;
+        return next with
+        {
+            PageLifecycle = observed,
+            PageGeneration = generation,
+            PagePendingSince = pending ? continuing ? previous.PagePendingSince : now : 0
+        };
+    }
     private void Run()
     {
         var index = new SessionTitleIndex();
@@ -340,7 +381,9 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                                 _view = null;
                                 _lastReadTimestamp = Stopwatch.GetTimestamp();
                                 var previous = _status;
-                                _status = Advance(previous, exact);
+                                // The debug route never reports the pending page state, so the
+                                // wait tracking only keeps the lifetime it already knows.
+                                _status = Advance(previous, TrackPage(previous, exact, null, _clock()));
                                 changed = _status.Version != previous.Version;
                                 _bindingRequest?.Completion.TrySetResult("已启用页面唯一 ID 自动识别，无需绑定");
                                 _bindingRequest = null;
@@ -407,7 +450,7 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                             var next = new ActiveThreadRouteStatus(resolved.ThreadId, view.WindowCount, connected, 0, errorText,
                                 SidebarSessionResolver.ViewKey(view), resolved.Method, resolved.SameTitleAmbiguous);
                             _view = view; _lastReadTimestamp = Stopwatch.GetTimestamp();
-                            var previous = _status; _status = Advance(previous, next);
+                            var previous = _status; _status = Advance(previous, TrackPage(previous, next, view.Lifecycle, _clock()));
                             statusChanged = _status.Version != previous.Version;
                             // Publish the exact identity before completing the click task.
                             if (publishIdentify) { _identifyRequest = null; identify!.Completion.TrySetResult(identifyError); }
@@ -421,7 +464,8 @@ internal sealed class CodexVisibleThreadMonitor : IDisposable
                     lock (_sync)
                     {
                         _view = null; _lastReadTimestamp = Stopwatch.GetTimestamp();
-                        _status = Advance(_status, new(null, 0, false, 0, "当前页面暂时无法读取"));
+                        var previous = _status;
+                        _status = Advance(previous, TrackPage(previous, new(null, 0, false, 0, "当前页面暂时无法读取"), null, _clock()));
                         if (ReferenceEquals(_identifyRequest, identify)) CancelIdentify("当前页面暂时无法读取，请稍后识别");
                     }
                     StatusChanged?.Invoke();

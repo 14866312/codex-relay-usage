@@ -1,6 +1,14 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace CodexTokenOverlay;
+
+// The presentation cache key. The wait stage belongs here so the three-second and
+// one-minute wording still repaints while the raw route status is unchanged; a stage
+// change never touches the session selection generation.
+internal sealed record OverlayPresentationState(TokenSnapshot? Snapshot, SessionCostResult? Cost,
+    ActiveThreadRouteStatus Route, string? ManualId, string? Error, DisplayField Primary, DisplayField Secondary,
+    DisplayField Visible, bool Identifying, PageWaitStage Stage);
 
 internal sealed class OverlayContext : ApplicationContext
 {
@@ -59,8 +67,7 @@ internal sealed class OverlayContext : ApplicationContext
     private long _logChangeVersion;
     private long _nextHostValidation;
     private long _nextBackgroundPoll;
-    private (TokenSnapshot? Snapshot, SessionCostResult? Cost, ActiveThreadRouteStatus Route, string? ManualId,
-        string? Error, DisplayField Primary, DisplayField Secondary, DisplayField Visible, bool Identifying)? _presentedState;
+    private OverlayPresentationState? _presentedState;
     private string? _pendingThreadId => _selection.ThreadId;
     private ActiveThreadRouteStatus _pendingRouteStatus = new(null, 0, false, 0, null);
     private string? _manualThreadId;
@@ -692,11 +699,16 @@ internal sealed class OverlayContext : ApplicationContext
 
     private void RefreshPresentation()
     {
-        var state = (_lastSnapshot, _cost, _pendingRouteStatus, _manualThreadId, _pendingError ?? _inlineIssue,
-            _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField, _settings.VisibleFields, _identifyInFlight);
+        // The wait stage is part of the presentation cache so the three-second and
+        // one-minute wording still updates while the raw route status is unchanged;
+        // a stage change never touches the session selection generation.
+        var stage = PageWaitRules.Stage(_pendingRouteStatus, Stopwatch.GetTimestamp());
+        var state = new OverlayPresentationState(_lastSnapshot, _cost, _pendingRouteStatus, _manualThreadId,
+            _pendingError ?? _inlineIssue, _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField,
+            _settings.VisibleFields, _identifyInFlight, stage);
         if (_presentedState == state) return;
         _presentedState = state;
-        var following = FollowSelection.Status(_pendingRouteStatus, _manualThreadId);
+        var following = FollowSelection.Status(_pendingRouteStatus, _manualThreadId, stage);
         var waiting = _pendingThreadId is null ? following : $"等待会话 {OverlayPresentationBuilder.ShortThreadId(_pendingThreadId)} 的用量";
         _presentation = _lastSnapshot is null
             ? OverlayPresentationBuilder.CreateWaiting(waiting, _settings.CollapsedPrimaryField, _settings.CollapsedSecondaryField, _settings.VisibleFields)

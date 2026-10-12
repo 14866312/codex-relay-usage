@@ -51,11 +51,14 @@ internal static class FollowSelection
     public static string? Resolve(ActiveThreadRouteStatus route, string? manualId) =>
         !string.IsNullOrWhiteSpace(manualId) ? manualId :
         route.IsConnected && route.ActiveWindowCount == 1 ? route.ThreadId : null;
-    public static string Status(ActiveThreadRouteStatus route, string? manualId) =>
+    public static string Status(ActiveThreadRouteStatus route, string? manualId, PageWaitStage stage = PageWaitStage.None) =>
         !string.IsNullOrWhiteSpace(manualId) ? "手动锁定" :
         route.ActiveWindowCount > 1 ? "多窗口：请手动选择会话" :
         route.IsConnected && route.ActiveWindowCount == 1 && !string.IsNullOrWhiteSpace(route.ThreadId)
             ? "自动跟随" + (route.Identification is null ? "" : " · " + route.Identification) :
-        !route.IsConnected ? route.Identification == "页面唯一 ID" ? route.LastError ?? "自动连接正在重连" : route.LastError ?? "正在读取当前对话" :
+        // A pending accessibility page is worded by wait stage; a debug-route disconnect
+        // keeps its immediate wording.
+        !route.IsConnected ? route.Identification == "页面唯一 ID" ? route.LastError ?? "自动连接正在重连"
+            : PageWaitRules.Text(stage) ?? route.LastError ?? "正在读取当前对话" :
         (route.LastError ?? (route.ActiveWindowCount == 0 ? "未找到可见 Codex 主窗口" : "无法识别当前对话")) + " · 可手动选择";
 }

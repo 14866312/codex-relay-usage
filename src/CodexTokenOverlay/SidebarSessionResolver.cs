@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace CodexTokenOverlay;
@@ -101,9 +102,15 @@ internal sealed record SidebarBindingTarget(long RootRevision, long ViewVersion,
 internal sealed class SidebarSessionResolver
 {
     private sealed record Binding(string ThreadId, string Title, string? ProjectKey, string Method, bool Exact = false);
+    // A pending page keeps the previous bindings as a candidate for a short gap; the
+    // normal resolve path re-checks document, rows, title and project before reuse.
+    internal static readonly TimeSpan GapRetention = TimeSpan.FromSeconds(3);
+    private readonly Func<long> _clock;
     private readonly Dictionary<int, Binding> _bindings = [];
     private string? _owner;
-    public void Reset() { _bindings.Clear(); _owner = null; }
+    private long _gapSince;
+    public SidebarSessionResolver(Func<long>? clock = null) => _clock = clock ?? Stopwatch.GetTimestamp;
+    public void Reset() { _bindings.Clear(); _owner = null; _gapSince = 0; }
     internal static string ViewKey(CodexViewIdentity view) => view.Sidebar is { Rows.Count: > 0 } sidebar
         ? sidebar.Key : $"{view.DocumentKey}/{view.ThreadId}/{view.Title}";
     internal VisibleSessionResolution ResolveCopiedLink(CodexViewIdentity before, CodexViewIdentity after,
@@ -144,6 +151,7 @@ internal sealed class SidebarSessionResolver
     }
     public VisibleSessionResolution Resolve(CodexViewIdentity view, IReadOnlyDictionary<string, string> titles, LocalProjectIndex projects)
     {
+        if (RetainPendingCandidate(view, out var pending)) return pending;
         ObserveOwner(view);
         if (view.WindowCount != 1 || view.Error is not null) return new(null, view.Error);
         if (view.ThreadId is not null) return new(view.ThreadId, null, "页面路由");
@@ -198,6 +206,25 @@ internal sealed class SidebarSessionResolver
         var source = scope is not null ? "侧栏项目" : rows.Count > 0 ? "侧栏识别" : "唯一标题";
         Remember(view, candidates[0], projects, source);
         return new(candidates[0], null, source);
+    }
+    // A page that goes pending for a moment must not drop a working identification: the
+    // native rows usually come back unchanged. The candidate is only kept for a short
+    // gap; a longer pending page is identified again from scratch. Numbers are never
+    // published from the candidate, because the route status stays unidentified.
+    private bool RetainPendingCandidate(CodexViewIdentity view, out VisibleSessionResolution resolution)
+    {
+        resolution = new(null, view.Error);
+        if (view.WindowCount != 1 || view.Error != CodexViewIdentityReader.PagePendingError)
+        {
+            _gapSince = 0;
+            return false;
+        }
+        if (_gapSince == 0) _gapSince = _clock();
+        if (Stopwatch.GetElapsedTime(_gapSince, _clock()) > GapRetention)
+        {
+            _bindings.Clear(); _owner = null;
+        }
+        return true;
     }
     public bool TryBind(CodexViewIdentity view, string id, IReadOnlyDictionary<string, string> titles, LocalProjectIndex projects, out string? error)
     {

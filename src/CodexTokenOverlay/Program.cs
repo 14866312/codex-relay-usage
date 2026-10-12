@@ -88,5 +88,6 @@ internal sealed record ActiveThreadRouteStatus(
     int ActiveWindowCount,
     bool IsConnected,
     long Version,
-    string? LastError, string? ViewKey = null, string? Identification = null, bool SameTitleAmbiguous = false);
+    string? LastError, string? ViewKey = null, string? Identification = null, bool SameTitleAmbiguous = false,
+    string? PageLifecycle = null, int PageGeneration = 0, long PagePendingSince = 0);
 
