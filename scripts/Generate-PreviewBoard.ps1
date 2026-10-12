@@ -1,4 +1,4 @@
-param([string]$PreviewDirectory = '')
+﻿param([string]$PreviewDirectory = '')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
