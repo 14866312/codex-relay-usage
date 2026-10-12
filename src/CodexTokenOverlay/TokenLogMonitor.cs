@@ -14,8 +14,11 @@ internal sealed class TokenLogMonitor : IDisposable
     private string _root;
     internal const int ReaderCacheCapacity = 8;
     // Related members keep their own readers so a group larger than the selection cache
-    // never restarts from byte zero; the group monitor releases members it dropped.
-    // Root plus the documented 32-member target must survive a refresh without restarting.
+    // never restarts from byte zero; the group monitor releases members it dropped and
+    // keeps the read set stable, so no round robin can evict an in-set reader mid-read.
+    // Root plus the documented 63-member target must survive a refresh without restarting.
+    // shortcut: the read set stops at 64 log members; when members beyond the limit must be
+    // covered, upgrade to a bounded scheduler that persists each member's read position.
     internal const int MemberReaderCapacity = 64;
     private readonly Dictionary<string, IncrementalSessionReader> _readers = new(StringComparer.OrdinalIgnoreCase);
     private readonly LinkedList<string> _readerOrder = new();

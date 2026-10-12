@@ -5,6 +5,8 @@ namespace CodexTokenOverlay;
 internal sealed class SessionGroupMonitor
 {
     internal const int MemberSliceBytes = 1024 * 1024;
+    // shortcut: one 1 MB slice per log member per refresh; when a member must be covered in
+    // fewer refreshes, add a scheduler that persists read positions instead of raising it.
     private readonly TokenLogMonitor _monitor;
     private readonly IRuntimeUsageSource? _runtime;
     private readonly Dictionary<string, SessionCostCalculator> _memberCosts = new(StringComparer.OrdinalIgnoreCase);
@@ -30,13 +32,17 @@ internal sealed class SessionGroupMonitor
         var catalog = _monitor.RefreshRelations(cancellationToken);
         var runtime = _runtime?.Read(cancellationToken) ?? RuntimeUsageReadResult.Disabled;
         var members = SessionGroupMembership.Resolve(catalog, rootThreadId, runtime.Observations);
-        _monitor.ReleaseMembers(members.Select(m => m.ThreadId).ToArray());
+        // Only the stable selection keeps readers; everything else is released, so a group
+        // larger than the reader cache never rotates its readers out mid-read.
+        var readSet = SelectLogMembers(members);
+        _monitor.ReleaseMembers(readSet);
         foreach (var departed in _memberCosts.Keys.Where(id => !members.Any(m => string.Equals(m.ThreadId, id, StringComparison.OrdinalIgnoreCase))).ToArray())
             _memberCosts.Remove(departed);
         var notes = new List<string>();
         if (!runtime.IsAvailable && runtime.Reason is { } reason) notes.Add("侧聊：" + reason);
         var rows = new List<RelatedMemberUsage>();
         var observedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var overLimit = 0;
         foreach (var member in members)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -53,8 +59,15 @@ internal sealed class SessionGroupMonitor
                 rows.Add(UnconfirmedRow(member));
                 continue;
             }
+            if (!readSet.Contains(member.ThreadId))
+            {
+                overLimit++;
+                rows.Add(OverLimitRow(member));
+                continue;
+            }
             rows.Add(ReadMember(member, prices, cancellationToken));
         }
+        if (overLimit > 0) notes.Add(overLimit + " 个成员超过读取上限，未计入已知合计");
         // A closed side chat keeps its last observed numbers in memory; the note states the scope.
         var retained = _observedSideChats.Where(pair => !observedIds.Contains(pair.Key)).ToArray();
         if (retained.Length > 0)
@@ -67,6 +80,27 @@ internal sealed class SessionGroupMonitor
         if (rows.Any(r => r.TokenCoverage == RelatedCoverage.Reading)) notes.Add("正在分片读取成员日志");
         return new(rootThreadId, selectionRevision, catalog.Version, prices.Version, ++_version, rows, notes);
     }
+
+    // Root first, then member ids in a stable order: the selection must not change between
+    // refreshes, or a group larger than the reader cache would restart readers mid-read.
+    private static HashSet<string> SelectLogMembers(IReadOnlyList<RelatedMemberCandidate> members)
+    {
+        var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var member in members
+            .Where(m => m.Kind is RelatedMemberKind.Root or RelatedMemberKind.Subagent)
+            .OrderBy(m => m.Kind == RelatedMemberKind.Root ? 0 : 1)
+            .ThenBy(m => m.ThreadId, StringComparer.Ordinal)
+            .Take(TokenLogMonitor.MemberReaderCapacity))
+            selected.Add(member.ThreadId);
+        return selected;
+    }
+
+    // Beyond the read limit the member still appears; a marker replaces the numbers it never
+    // had a chance to read, and it never enters the known total.
+    private static RelatedMemberUsage OverLimitRow(RelatedMemberCandidate member) =>
+        new(member.ThreadId, member.ParentThreadId, member.Kind, Attribution(member), member.Relation?.AgentRole,
+            RelatedCoverage.Partial, RelatedCoverage.Unavailable, null, null, null, null, null, 0, 0, null,
+            "超过读取上限，未计入已知合计", "本地日志");
 
     private RelatedMemberUsage ReadMember(RelatedMemberCandidate member, PricingRevision prices, CancellationToken token)
     {

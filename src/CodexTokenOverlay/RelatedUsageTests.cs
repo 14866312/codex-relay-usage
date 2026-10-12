@@ -22,6 +22,7 @@ internal static class RelatedUsageTests
         SideChatTests(check, Path.Combine(directory, "related-side"));
         PublicationTests(check);
         ScaleTests(check, Path.Combine(directory, "related-scale"));
+        ReadLimitTests(check, Path.Combine(directory, "related-limit"));
         ExpressionTests(check);
         TransportTests(check);
     }
@@ -201,6 +202,54 @@ internal static class RelatedUsageTests
         while (monitor.PollMember(big, 65_536, default).Snapshot is { MoreDataPending: true }) { }
         check("bounded member read resumes and finishes", monitor.MemberBytesRead(big) > firstSlice &&
             monitor.PollMember(big, 65_536, default).Snapshot!.Ledger!.Calls.Count == 400);
+    }
+
+    // The member read limit: root plus 63 id-sorted members are read; anything beyond stays
+    // visible as an explicit over-limit row. The selection must survive refreshes without
+    // rotating readers, and a large member must advance its slices across consecutive updates.
+    private static void ReadLimitTests(Action<string, bool> check, string root)
+    {
+        Write(root, RootId, Meta(RootId, subagent: false) + Context(RootId) + Usage(RootId, "r1", 10, 0, 5));
+        var big = "00000000-0000-4000-8000-000000000000";
+        var over = "00000000-0000-4000-8000-000000000063";
+        for (var i = 0; i < 64; i++)
+        {
+            var id = $"00000000-0000-4000-8000-{i:D12}";
+            Write(root, id, Meta(id, RootId, agentPath: "/root/m" + i) + Context(id) + Usage(id, "m" + i, 10, 0, 5));
+        }
+        var bigPath = Path.Combine(root, "sessions", big + ".jsonl");
+        File.AppendAllText(bigPath, new string(' ', 2_300_000), Utf8);
+        using var monitor = new TokenLogMonitor(Path.Combine(root, "sessions"));
+        var group = new SessionGroupMonitor(monitor);
+        var first = group.Update(RootId, 1, Prices, default);
+        check("65 log members keep the root and 63 sorted ids in the read set",
+            first.Members.Count == 65 && monitor.MemberBytesRead(RootId) is not null &&
+            monitor.MemberBytesRead(big) is not null && monitor.MemberBytesRead(over) is null);
+        check("an over-limit member stays visible, marked and outside the known total",
+            first.Members.Single(m => m.ThreadId == over) is { Kind: RelatedMemberKind.Subagent, TotalTokens: null,
+                CountedInTotals: false, Issue: "超过读取上限，未计入已知合计" } &&
+            first.Notes.Any(n => n.Contains("超过读取上限")));
+        check("a member beyond one slice reports reading and stays out of the known total",
+            first.Members.Single(m => m.ThreadId == big) is { TokenCoverage: RelatedCoverage.Reading, CountedInTotals: false } &&
+            monitor.MemberBytesRead(big) is { } slice && slice < new FileInfo(bigPath).Length && first.KnownTotals.TotalTokens == 15 * 63);
+        var slice1 = monitor.MemberBytesRead(big);
+        var second = group.Update(RootId, 1, Prices, default);
+        var slice2 = monitor.MemberBytesRead(big);
+        check("refreshes keep advancing the same member read position",
+            slice1 is not null && slice2 > slice1 &&
+            second.Members.Single(m => m.ThreadId == big).TokenCoverage == RelatedCoverage.Reading);
+        var third = group.Update(RootId, 1, Prices, default);
+        check("a large member finishes without restarting",
+            third.Members.Single(m => m.ThreadId == big) is { TokenCoverage: RelatedCoverage.Complete, TotalTokens: 15, CountedInTotals: true });
+        check("the known total counts every settled member once",
+            third.KnownTotals.TotalTokens == 15 * 64 && third.KnownTotals.Cost is not null && !third.KnownTotals.IsComplete);
+        var settled = monitor.MemberBytesRead(big);
+        var fourth = group.Update(RootId, 1, Prices, default);
+        check("a settled member is not reread from the start",
+            monitor.MemberBytesRead(big) == settled && fourth.KnownTotals.TotalTokens == 15 * 64);
+        var switched = group.Update("00000000-0000-4000-8000-000000000010", 2, Prices, default);
+        check("switching the root releases the previous member readers",
+            switched.Members.Count == 1 && monitor.MemberBytesRead(big) is null && monitor.MemberBytesRead(RootId) is null);
     }
 
     private static void ExpressionTests(Action<string, bool> check)
