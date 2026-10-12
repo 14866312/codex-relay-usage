@@ -58,28 +58,40 @@ internal sealed class CodexRuntimeUsageReader : IRuntimeUsageSource, IDisposable
         if(!root)return null;
         const idPattern=/^[0-9a-fA-F-]{20,64}$/;
         const id=v=>typeof v==='string'&&idPattern.test(v)?v:null;
-        const path=v=>typeof v==='string'&&v.length<=128&&/^[A-Za-z0-9_-/:.]*$/.test(v)?v:null;
-        const keys=['input_tokens','inputTokens','cached_input_tokens','cachedInputTokens','cache_write_input_tokens','cacheWriteInputTokens','output_tokens','outputTokens','reasoning_output_tokens','reasoningOutputTokens','total_tokens','totalTokens'];
+        const pathId=v=>{if(typeof v!=='string'||v.length>256)return null;const m=/\/local\/([0-9a-fA-F-]{20,64})$/.exec(v);return m?m[1]:null;};
+        const keys=['inputTokens','input_tokens','cachedInputTokens','cached_input_tokens','cacheWriteInputTokens','cache_write_input_tokens','outputTokens','output_tokens','reasoningOutputTokens','reasoning_output_tokens','totalTokens','total_tokens'];
         const counts=o=>{if(!o||typeof o!=='object')return null;const r={};let any=false;
         for(const k of keys){const v=o[k];if(typeof v==='number'&&isFinite(v)&&v>=0){r[k]=v;any=true;}}return any?r:null;};
-        const out=[];const seen=new Set();const q=[root];let n=0;
-        while(q.length&&n++<512){
-        const f=q.shift();if(!f)continue;
-        for(const bag of [f.memoizedProps,f.memoizedState]){
-        if(!bag||typeof bag!=='object')continue;
-        for(const item of (Array.isArray(bag)?bag:[bag])){
-        if(!item||typeof item!=='object')continue;
-        const threadId=id(item.id)||id(item.threadId);
-        const usage=counts(item.latestTokenUsageInfo)||counts(item.tokenUsageInfo);
-        const side=item.sideConversation===true;
-        if(!usage&&!side)continue;
-        if(!threadId||seen.has(threadId))continue;
+        const isState=v=>v!==null&&typeof v==='object'&&('latestTokenUsageInfo' in v||'sideConversation' in v||'resumeState' in v);
+        const out=[];const seen=new Set();
+        const add=(threadId,state)=>{
+        if(!threadId||seen.has(threadId)||!isState(state))return false;
         seen.add(threadId);
-        out.push({id:threadId,parent:id(item.parentThreadId),side:side,parentPath:path(item.sideConversationParentNavigationPath),counts:usage});
-        if(out.length>=64)return out;
-        }}
+        out.push({id:threadId,side:state.sideConversation===true,ephemeral:state.ephemeral===true,
+        parent:id(state.parentThreadId)||pathId(state.sideConversationParentNavigationPath)||id(state.forkedFromId),
+        parentPath:pathId(state.sideConversationParentNavigationPath)||null,
+        counts:counts(state.latestTokenUsageInfo&&state.latestTokenUsageInfo.total)||counts(state.latestTokenUsageInfo)});
+        return out.length>=64;};
+        // The conversation store is held by a hook value; only the whitelisted fields above
+        // are read from it, never message bodies. Lightweight metadata copies elsewhere in
+        // the tree are only a fallback, so the store with usage always wins.
+        const q=[root];let n=0;const loose=[];
+        while(q.length&&n++<20000){
+        const f=q.shift();if(!f)continue;
+        let h=f.memoizedState;
+        for(let i=0;h&&i<64;i++){try{
+        const v=h.memoizedState;
+        for(const item of [v,v&&typeof v==='object'?v.current:null]){
+        if(!item||typeof item!=='object')continue;
+        const map=item.conversations;
+        if(map&&typeof map.get==='function'&&typeof map.size==='number'&&map.size<=256){
+        for(const [key,value] of map)if(add(id(key),value))return out;
+        if(out.length)return out;
+        }else if(isState(item)&&loose.length<64)loose.push(item);
+        }}catch(e){}h=h.next;}
         if(f.child)q.push(f.child);if(f.sibling)q.push(f.sibling);
         }
+        for(const item of loose)if(add(id(item.id)||id(item.threadId),item))return out;
         return out.length?out:null;
         }catch(e){return null;}})()
         """;

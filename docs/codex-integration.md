@@ -35,7 +35,8 @@
 - 子代理日志就是普通会话 JSONL，包含 `token_usage_record`（`thread_id`、`session_id`、`response_id`、`turn_id`、`usage`、`thread_token_usage`），因此可以按自身调用去重与计价。
 - 实测（本机 26.1007.2314.0，2026-10-12，80 份子代理日志）：带 `forked_from_id` 的分叉子代理，其首条 `thread_token_usage` 等于自身首次调用（6 份样本：子 28,332–39,340 对父 8,471,997–22,722,545），即当前版本的子线程累计是自身范围，不含父线程累计。工具不依赖该结论：成员只在“线程累计与调用合计一致”时标记完整，否则只计入自身调用。
 - 会话内侧聊（`ephemeral` + `sideConversation`）不写 JSONL：本机 313 份活动日志与 9 份归档中没有侧聊记录；`state_5.sqlite` 的 `threads` 表 295 行全部有 `rollout_path`，没有侧聊行；`thread_spawn_edges` 的 80 行与子代理日志一一对应。因此侧聊只能从运行时观察。
-- 桌面渲染进程的会话状态含 `sideConversation`、`ephemeral`、`sideConversationParentNavigationPath`、`forkedFromId`、`parentThreadId` 与 `latestTokenUsageInfo`（由 `thread/tokenUsage/updated` 更新）。这些字段位于应用内部状态，能否经现有回环调试连接稳定读取**尚未验证**；`--runtime-usage-probe` 用于在启用调试连接的 Codex 上核实，未验证前侧聊显示数据不可用原因，不使用完整 IPC 状态或 SQLite 累计替代。
+- 运行时用量入口已实测（本机 26.1007.2314.0，2026-10-12，Codex 以 `--remote-debugging-address=127.0.0.1 --remote-debugging-port=0` 启动）：会话状态位于主页面 React fiber 的 hook 值中，其 `conversations` Map 的每个值包含 `id`、`sideConversation`、`ephemeral`、`parentThreadId`、`forkedFromId`、`sideConversationParentNavigationPath` 与 `latestTokenUsageInfo`（`{total, last, modelContextWindow}`，数字字段为 camelCase，由 `thread/tokenUsage/updated` 更新）。白名单表达式在约 3,300 个 fiber 节点内命中，单次求值约 10 ms。
+- 侧聊的 `parentThreadId` 为空，父关系由 `sideConversationParentNavigationPath`（`/local/<会话 ID>`）或 `forkedFromId` 解析；同页还存在不含用量的轻量元数据副本，表达式优先采用会话 store 的条目。字段缺失、结构变化或调试连接不可用时按不可用处理，不使用完整 IPC 状态或 SQLite 累计替代；Codex 更新内部结构后需用 `--runtime-usage-probe` 重新核实。
 
 ## IPC 订阅
 

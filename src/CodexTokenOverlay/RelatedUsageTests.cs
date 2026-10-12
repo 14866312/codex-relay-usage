@@ -211,19 +211,21 @@ internal static class RelatedUsageTests
     {
         var expression = CodexRuntimeUsageReader.UsageExpression;
         check("runtime expression reads only whitelisted identifiers and numbers",
-            expression.Contains("latestTokenUsageInfo") && expression.Contains("sideConversation") &&
-            expression.Contains("parentThreadId") && expression.Contains("input_tokens"));
+            expression.Contains("conversations") && expression.Contains("latestTokenUsageInfo") &&
+            expression.Contains("sideConversation") && expression.Contains("parentThreadId") &&
+            expression.Contains("inputTokens") && expression.Contains("forkedFromId"));
         check("runtime expression never touches conversation content",
             !expression.Contains("messages") && !expression.Contains("items") && !expression.Contains("title") &&
-            !expression.Contains("content") && !expression.Contains("instructions") && !expression.Contains("prompt"));
-        check("runtime expression stays bounded", expression.Contains("512") && expression.Contains("64"));
+            !expression.Contains("content") && !expression.Contains("instructions") && !expression.Contains("prompt") &&
+            !expression.Contains("turns"));
+        check("runtime expression stays bounded", expression.Contains("20000") && expression.Contains("64"));
     }
 
     private static void TransportTests(Action<string, bool> check)
     {
         using var page = new FakePage();
-        page.Payload = "[{\"id\":\"" + SideId + "\",\"parent\":\"" + RootId + "\",\"side\":true,\"parentPath\":\"/local/" + RootId +
-            "\",\"counts\":{\"input_tokens\":20,\"cached_input_tokens\":5,\"output_tokens\":10,\"total_tokens\":30}}]";
+        page.Payload = "[{\"id\":\"" + SideId + "\",\"side\":true,\"ephemeral\":true,\"parent\":\"" + RootId +
+            "\",\"parentPath\":\"/local/" + RootId + "\",\"counts\":{\"inputTokens\":20,\"cachedInputTokens\":5,\"outputTokens\":10,\"totalTokens\":30}}]";
         using (var reader = new CodexRuntimeUsageReader())
         {
             var result = reader.ReadProcess(Environment.ProcessId, "runtime-transport", default);

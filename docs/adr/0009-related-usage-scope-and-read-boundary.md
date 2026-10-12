@@ -12,7 +12,7 @@
 
 **Token 覆盖与费用覆盖分开记录。** 侧聊只有运行时累计、没有逐调用身份，因此展示 Token、费用显示不可用，不生成虚构费用。关闭的侧聊在内存中保留最后一次观察值并标注“已不在观察中”；启动前已消失的侧聊与断线期间的缺口不做补回承诺。
 
-**入口不可用时如实降级。** 运行时字段是版本相关的内部结构：未启用本地调试连接、字段缺失或读取失败时，侧聊显示明确的数据不可用原因，不使用完整 IPC 会话状态或 SQLite 累计替代。子代理部分只依赖日志，不依赖该入口。
+**入口不可用时如实降级。** 运行时字段是版本相关的内部结构。本机 26.1007.2314.0 已验证可从主页面 React fiber 的 hook 值读取会话 store（`conversations` Map 的 `sideConversation`、`parentThreadId`、`sideConversationParentNavigationPath` 与 `latestTokenUsageInfo`）；未启用本地调试连接、字段缺失、结构变化或读取失败时，侧聊显示明确的数据不可用原因，不使用完整 IPC 会话状态或 SQLite 累计替代。子代理部分只依赖日志，不依赖该入口，Codex 更新后需用 `--runtime-usage-probe` 重新核实。
 
 ## 后果
 

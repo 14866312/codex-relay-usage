@@ -37,7 +37,7 @@ dotnet publish .\src\CodexTokenOverlay\CodexTokenOverlay.csproj -c Release -r wi
 | --runtime-usage-probe | 运行时白名单投影核对（关系、侧聊标记与数字；需以调试参数启动的 Codex） |
 | --ipc-probe | IPC 订阅诊断（不用于生产识别） |
 
-`--runtime-usage-probe "<out.json>" [进程 ID]` 用于核实侧聊入口：省略进程 ID 时读取当前可见的 Codex 主窗口，可用时退出码 0，未启用调试连接、页面未提供字段或读取失败时退出码 1，并在 JSON 中给出原因。输出只有线程标识、侧聊标记、父导航路径与数字字段，不含消息正文；核实结果留在本机。**该入口目前尚未在启用调试连接的桌面端上验证**，验证通过前侧聊在明细中显示数据不可用原因（见 [ADR-0009](adr/0009-related-usage-scope-and-read-boundary.md)）。
+`--runtime-usage-probe "<out.json>" [进程 ID]` 用于核实侧聊入口：省略进程 ID 时读取当前可见的 Codex 主窗口，可用时退出码 0，未启用调试连接、页面未提供字段或读取失败时退出码 1，并在 JSON 中给出原因。输出只有线程标识、侧聊标记、父导航路径与数字字段，不含消息正文；核实结果留在本机。本机 2026-10-12 在 Codex 26.1007.2314.0（`--remote-debugging-address=127.0.0.1 --remote-debugging-port=0`）上核实通过：会话内打开一个侧聊后，探针返回该侧聊的标识、`sideConversation` 标记、解析出的父会话与其它线程的数字字段。Codex 更新内部结构后需重新核实，核实不通过时侧聊在明细中显示数据不可用原因（见 [ADR-0009](adr/0009-related-usage-scope-and-read-boundary.md)）。
 
 关联用量的合成检查在 `--self-test` 中：分类与已知合计、多级关系、冲突与缺失不误归属、分叉继承基线、去重与迁移、截断重写、侧聊生命周期与保留、发布版本核对、32 成员规模与分片读取、表达式白名单与运行时传输解析；`--live-ui-probe` 另外验证生产控制器把子代理并入分组且主会话数值不变。运行时传输检查使用本机回环合成页面，不连接真实 Codex。
 
