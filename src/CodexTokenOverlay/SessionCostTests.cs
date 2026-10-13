@@ -72,6 +72,19 @@ internal static class SessionCostTests
         var mismatchedReasoning = Single(); Record(mismatchedReasoning, "second", SampleUsage, doubleUsage with { Reasoning = 199 });
         var reasoningResult = new SessionCostCalculator().Calculate(mismatchedReasoning.Snapshot(), prices);
         check("reported reasoning aggregate mismatch makes estimate partial without extra charge", reasoningResult.Status == SessionCostStatus.Partial && reasoningResult.Amounts?.Total == .1345197m);
+        var geminiUsage = new UsageAmounts(97_125, 3_610, 0, 898, 4_635, 98_023);
+        var geminiPrices = Prices(Profile("gem/gemini-3.8-flash-high"));
+        var gemini = new SessionCostCalculator().Calculate(Single(geminiUsage, model: "gem/gemini-3.8-flash-high").Snapshot(), geminiPrices);
+        check("gemini thinking tokens bill at the output rate", gemini.Status == SessionCostStatus.Complete
+            && gemini.Amounts?.Output == 5_533 / 1_000_000m * 10m * .35m);
+        var geminiNoReasoning = new SessionCostCalculator().Calculate(
+            Single(geminiUsage with { Reasoning = null }, model: "gem/gemini-3.8-flash-high").Snapshot(), geminiPrices);
+        check("gemini without reasoning bills output only", geminiNoReasoning.Amounts?.Output == 898 / 1_000_000m * 10m * .35m);
+        var geminiOverflow = new SessionCostCalculator().Calculate(
+            Single(new(0, 0, 0, long.MaxValue, 1), model: "gem/gemini-3.8-flash-high").Snapshot(), geminiPrices);
+        check("gemini output plus reasoning overflow stays unpriced", geminiOverflow.Amounts is null && geminiOverflow.Unpriced.Single().Reason!.Contains("溢出"));
+        var geminiOnOtherModel = new SessionCostCalculator().Calculate(Single(geminiUsage).Snapshot(), prices);
+        check("other models still reject reasoning above output", geminiOnOtherModel.Amounts is null && geminiOnOtherModel.Unpriced.Single().Reason == "推理用量超过输出");
         var zero = new SessionCostCalculator().Calculate(Single(new(0, 0, 0, 0)).Snapshot(), Prices(Profile(low: new())));
         check("explicit zero quantities require no prices", zero.Status == SessionCostStatus.Complete && zero.Amounts?.Total == 0m);
         var zeroPrice = new SessionCostCalculator().Calculate(Single().Snapshot(), Prices(Profile(low: new(0m, 0m, null, 0m))));
@@ -193,6 +206,11 @@ internal static class SessionCostTests
         var resumed = reader.Read();
         check("canceled incremental read resumes with dedup intact", didCancel && resumed!.Ledger!.Calls.Count == 1 &&
             calculator.Calculate(resumed.Ledger, prices).Amounts?.Total == .06725985m);
+        File.WriteAllText(Path.Combine(sessions, "gemini.jsonl"), Row("session_meta", new { id = "gemini" })
+            + Row("turn_context", new { turn_id = "turn", model = "gem/gemini-3.8-flash-high" })
+            + Row("token_usage_record", Payload("response", new(97_125, 3_610, 0, 898, 4_635, 98_023), thread: "gemini")), encoding);
+        var probe = CostLogProbe.Run(directory, "gemini");
+        check("cost probe prices gemini thinking tokens the same way", probe.ReadSucceeded && probe.FormulaMatches && probe.PricedCalls == 1);
     }
     private static void ConfigurationTests(Action<string, bool> check, string directory)
     {

@@ -16,6 +16,7 @@ internal static class RelatedUsageTests
     internal static void Run(Action<string, bool> check, string directory)
     {
         ClassificationTests(check, Path.Combine(directory, "related-basic"));
+        GeminiTests(check, Path.Combine(directory, "related-gemini"));
         RelationEdgeTests(check, Path.Combine(directory, "related-edges"));
         InheritanceTests(check, Path.Combine(directory, "related-fork"));
         DedupTests(check, Path.Combine(directory, "related-dedup"));
@@ -47,6 +48,21 @@ internal static class RelatedUsageTests
         check("cost is priced per member from its own calls", group.Members.Single(m => m.ThreadId == SubId).Cost is not null &&
             group.Members.Single(m => m.ThreadId == SideId).Cost is null &&
             group.Members.Single(m => m.ThreadId == SideId).CostCoverage == RelatedCoverage.Unavailable);
+    }
+
+    // A Gemini member reports thinking tokens outside output; its aggregate still matches its
+    // own calls, so the member stays confirmed instead of being marked partial.
+    private static void GeminiTests(Action<string, bool> check, string root)
+    {
+        var member = "55555555-eeee-4eee-8eee-555555555555";
+        Write(root, RootId, Meta(RootId, subagent: false) + Context(RootId) + Usage(RootId, "r1", 80, 0, 20));
+        Write(root, member, Meta(member, RootId) + Context(member, "gem/gemini-3.8-flash-high") +
+            Usage(member, "g1", 100, 0, 5, reasoning: 30));
+        using var monitor = new TokenLogMonitor(Path.Combine(root, "sessions"));
+        var group = new SessionGroupMonitor(monitor).Update(RootId, 1, Prices, default);
+        check("gemini member with reasoning above output stays confirmed",
+            group.Members.Single(m => m.ThreadId == member) is { TotalTokens: 105, TokenCoverage: RelatedCoverage.Complete, Issue: null } &&
+            group.KnownTotals.TotalTokens == 205);
     }
 
     private static void RelationEdgeTests(Action<string, bool> check, string root)
@@ -341,15 +357,15 @@ internal static class RelatedUsageTests
         return JsonSerializer.Serialize(new { type = "session_meta", payload }) + "\n";
     }
 
-    private static string Context(string thread) => JsonSerializer.Serialize(new
+    private static string Context(string thread, string model = "relay/test") => JsonSerializer.Serialize(new
     {
         timestamp = "2026-10-12T10:00:00Z",
         type = "turn_context",
-        payload = new { turn_id = "turn-" + thread, model = "relay/test" }
+        payload = new { turn_id = "turn-" + thread, model }
     }) + "\n";
 
     private static string Usage(string thread, string response, long input, long cached, long output,
-        long? aggregateTotal = null, string? threadOverride = null)
+        long? aggregateTotal = null, string? threadOverride = null, long reasoning = 0)
     {
         var total = aggregateTotal ?? input + output;
         return JsonSerializer.Serialize(new
@@ -363,9 +379,9 @@ internal static class RelatedUsageTests
                 response_id = response,
                 turn_id = "turn-" + thread,
                 usage = new { input_tokens = input, cached_input_tokens = cached, cache_write_input_tokens = 0L,
-                    output_tokens = output, reasoning_output_tokens = 0L, total_tokens = input + output },
+                    output_tokens = output, reasoning_output_tokens = reasoning, total_tokens = input + output },
                 thread_token_usage = new { input_tokens = input, cached_input_tokens = cached, cache_write_input_tokens = 0L,
-                    output_tokens = output, reasoning_output_tokens = 0L, total_tokens = total }
+                    output_tokens = output, reasoning_output_tokens = reasoning, total_tokens = total }
             }
         }) + "\n";
     }

@@ -82,6 +82,17 @@ internal static class LiveUsageTests
         var cost = calculator.Calculate(reader.Read()!.Ledger!, prices);
         check("live token source does not alter per-call billing", cost.RecordedCalls == 2 && cost.Amounts?.Total == .0001568m);
 
+        // Screenshot regression: Gemini reports thinking tokens outside output, so a thread
+        // aggregate with more reasoning than output is no anomaly.
+        File.WriteAllText(path, Meta + Row("turn_context", new { turn_id = "turn", model = "gem/gemini-3.8-flash-high" })
+            + Row("token_usage_record", new { thread_id = "live", session_id = "session", response_id = "gemini-1", turn_id = "turn",
+                usage = SessionCostTests.Usage(new(59_183, 58_000, 0, 898, 4_635, 60_081)),
+                thread_token_usage = SessionCostTests.Usage(new(405_410, 329_036, 0, 898, 4_635, 406_308)) }), utf8);
+        reader = new(path, "live"); var gemini = reader.Read()!;
+        check("gemini cumulative reasoning above output is no anomaly", gemini.Issue is null);
+        check("gemini screenshot values stay as reported", gemini.TotalTokens == 406_308 && gemini.OutputTokens == 898
+            && gemini.ReasoningOutputTokens == 4_635 && gemini.CachedInputTokens == 329_036 && gemini.ContextUsedTokens == 60_081);
+
         File.WriteAllText(path, Meta + Legacy(U(1_000)) + Record("a", U(100)), utf8); reader = new(path, "live");
         check("historical gap never adds uncertain call sum on top of legacy", reader.Read()!.TotalTokens == 1_010);
         Append(Record("aggregate", U(100), U(1_200, 30, 120)));

@@ -51,6 +51,8 @@ internal static class OverlayPresentationBuilder
         var labels = Labels(field);
         if (field == DisplayField.Speed)
             labels = (labels.Compact, s.SpeedGenerationOnly ? "输出速度（纯生成）" : "输出速度（本轮平均）");
+        else if (field == DisplayField.Reasoning)
+            labels = (labels.Compact, SessionCostCalculator.IsGemini(s.Model) ? "推理输出（单独计费）" : "推理输出（已含在输出）");
         string Number(long? number, bool valid = true) => number.HasValue && (!TokenSnapshot.Valid(number) || !valid)
             ? "异常" : number.HasValue ? (compact ? FormatTokenCount(number) : number.Value.ToString("N0", Invariant)) + (compact ? "" : " tok")
             : compact ? "—" : "— / 未提供";
@@ -62,7 +64,7 @@ internal static class OverlayPresentationBuilder
             DisplayField.CacheHit => Number(s.CachedInputTokens, !s.InputTokens.HasValue || s.CacheIsValid),
             DisplayField.CacheMiss => s.CachedInputTokens > s.InputTokens || s.InputTokens < 0 || s.CachedInputTokens < 0 ? "异常" : Number(s.UncachedInputTokens),
             DisplayField.CacheHitRate => s.CachedInputTokens > s.InputTokens || s.InputTokens < 0 || s.CachedInputTokens < 0 ? "异常" : Rate(s.CacheHitPercent),
-            DisplayField.Reasoning => Number(s.ReasoningOutputTokens, s.ReasoningIsValid),
+            DisplayField.Reasoning => Number(s.ReasoningOutputTokens),
             DisplayField.Context => ContextAmounts(s, compact),
             DisplayField.ContextPercent => Percent(s.ContextPercent),
             DisplayField.Thread => ShortThreadId(s.ThreadId),
@@ -151,7 +153,7 @@ internal static class OverlayPresentationBuilder
         DisplayField.CacheHitRate => ("缓存命中", "缓存命中"), DisplayField.CacheMiss => ("未缓存", "未缓存输入"),
         DisplayField.Context => ("上下文", "最近调用 / 窗口"),
         DisplayField.ContextPercent => ("上下文", "上下文占用（最近调用估算）"),
-        DisplayField.Reasoning => ("推理", "推理输出（已含在输出）"), DisplayField.Thread => ("会话", "会话"),
+        DisplayField.Reasoning => ("推理", "推理输出"), DisplayField.Thread => ("会话", "会话"),
         DisplayField.Cost => ("费用", "会话费用估算"),
         DisplayField.Speed => ("速度", "输出速度"),
         _ => throw new ArgumentOutOfRangeException(nameof(f))

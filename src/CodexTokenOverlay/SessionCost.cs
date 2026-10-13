@@ -32,6 +32,11 @@ internal sealed record SessionCostResult(string ThreadId, Guid LedgerId, long Le
 // Called by the single background worker. Revalues only changed calls unless the price revision changes.
 internal sealed class SessionCostCalculator
 {
+    // Gemini reports thinking tokens outside output and bills both at the output rate; every
+    // other relay reports reasoning inside output, so it is never charged twice.
+    internal static bool IsGemini(string? model) => model?.Contains("gemini", StringComparison.OrdinalIgnoreCase) == true;
+    internal static long? BillableOutput(UsageAmounts usage, string? model) => !IsGemini(model) ? usage.Output
+        : usage.Output is { } output ? TokenSnapshot.Sum(output, usage.Reasoning ?? 0L) : null;
     private Guid _ledgerId;
     private long _priceVersion = -1, _ledgerVersion = -1;
     private readonly Dictionary<UsageCallKey, EvaluatedCall> _evaluated = new();
@@ -97,14 +102,19 @@ internal sealed class SessionCostCalculator
         var issue = call.Issue ?? call.Usage.ValidationIssue;
         if (issue is not null) return Fail(issue);
         if (call.Model is null) return Fail("调用模型未知或不唯一");
+        // More reasoning than output is normal for Gemini (thinking tokens are separate) and a
+        // broken record for every other model.
+        if (!IsGemini(call.Model) && call.Usage.Reasoning > call.Usage.Output) return Fail("推理用量超过输出");
         var profile = settings.ForModel(call.Model);
         if (profile is null) return Fail("模型未配置价格");
         var high = profile.TwoTiers && call.Usage.Input > profile.Threshold;
         var tier = !profile.TwoTiers ? "统一价格" : high ? "> " + profile.Threshold.ToString("N0", CultureInfo.InvariantCulture) : "≤ " + profile.Threshold.ToString("N0", CultureInfo.InvariantCulture);
         var rates = high ? profile.High : profile.Low;
         var u = call.Usage; var normal = u.Input!.Value - u.CacheRead!.Value - u.CacheWrite!.Value;
+        var output = BillableOutput(u, call.Model);
+        if (output is null) return Fail("输出与推理相加溢出", profile.Name, tier);
         var missing = new[] { ("普通输入", normal, rates.Input), ("缓存读取", u.CacheRead!.Value, rates.CacheRead),
-            ("缓存写入", u.CacheWrite!.Value, rates.CacheWrite), ("输出", u.Output!.Value, rates.Output) }
+            ("缓存写入", u.CacheWrite!.Value, rates.CacheWrite), ("输出", output.Value, rates.Output) }
             .Where(p => p.Item2 > 0 && p.Item3 is null).Select(p => p.Item1).ToArray();
         if (missing.Length > 0) return Fail("所用档位的分项单价未配置：" + string.Join("、", missing), profile.Name, tier);
         try
@@ -113,7 +123,7 @@ internal sealed class SessionCostCalculator
             decimal Charge(long count, decimal? rate) => count == 0 || rate == 0m || factor == 0m ? 0m
                 : checked(count / 1_000_000m * (rate ?? 0m) * factor);
             var amounts = new CostAmounts(Charge(normal, rates.Input), Charge(u.CacheRead.Value, rates.CacheRead),
-                Charge(u.CacheWrite.Value, rates.CacheWrite), Charge(u.Output!.Value, rates.Output));
+                Charge(u.CacheWrite.Value, rates.CacheWrite), Charge(output.Value, rates.Output));
             _ = amounts.Total;
             return new(call, profile.Name, tier, amounts, null);
         }

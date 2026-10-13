@@ -16,8 +16,6 @@ internal sealed record TokenSnapshot(
 {
     public static bool Valid(long? value) => value is >= 0;
     public bool CacheIsValid => Valid(InputTokens) && Valid(CachedInputTokens) && CachedInputTokens <= InputTokens;
-    public bool ReasoningIsValid => Valid(ReasoningOutputTokens) &&
-        (!OutputTokens.HasValue || (Valid(OutputTokens) && ReasoningOutputTokens <= OutputTokens));
     public long? EffectiveTotalTokens => TotalTokenInvalid ? null : TotalTokens.HasValue
         ? (Valid(TotalTokens) ? TotalTokens : null)
         : Sum(InputTokens, OutputTokens);
@@ -39,7 +37,6 @@ internal sealed record TokenSnapshot(
             if (new[] { TotalTokens, InputTokens, CachedInputTokens, OutputTokens, ReasoningOutputTokens, ContextUsedTokens, ContextWindowTokens }.Any(v => v < 0))
                 issues.Add("记录含负数");
             if (CachedInputTokens > InputTokens) issues.Add("缓存读取大于输入");
-            if (ReasoningOutputTokens > OutputTokens) issues.Add("推理输出大于输出");
             var sum = Sum(InputTokens, OutputTokens);
             if (Valid(InputTokens) && Valid(OutputTokens) && sum is null) issues.Add("输入与输出相加溢出");
             if (Valid(TotalTokens) && sum.HasValue && TotalTokens != sum) issues.Add("总量与输入加输出不一致");

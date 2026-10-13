@@ -19,7 +19,6 @@ internal sealed record UsageAmounts(long? Input, long? CacheRead, long? CacheWri
                 if (checked(CacheRead!.Value + CacheWrite!.Value) > Input) return "缓存读写之和超过总输入";
                 var total = checked(Input!.Value + Output!.Value);
                 if (Total.HasValue && Total != total) return "总用量与输入输出不一致";
-                if (Reasoning > Output) return "推理用量超过输出";
             }
             catch (OverflowException) { return "用量超出范围"; }
             return null;

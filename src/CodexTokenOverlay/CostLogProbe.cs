@@ -15,8 +15,13 @@ internal static class CostLogProbe
             PriceEntryMode.EffectivePrices, 1m, true, 272_000, new(1m, 1m, 1m, 1m), new(2m, 2m, 2m, 2m))).ToArray();
         var calculator = new SessionCostCalculator(); var prices = new PricingRevision(1, new(1, profiles));
         var result = calculator.Calculate(ledger, prices);
-        var expected = ledger.Calls.Where(c => c.Issue is null && c.Usage.ValidationIssue is null && c.Model is not null)
-            .Sum(c => ((decimal)c.Usage.Input!.Value + c.Usage.Output!.Value) / 1_000_000m * (c.Usage.Input > 272_000 ? 2m : 1m));
+        // Mirrors the calculator's rule: Gemini's thinking tokens bill at the output rate.
+        decimal Expected(UsageCall c) => ((decimal)c.Usage.Input!.Value + SessionCostCalculator.BillableOutput(c.Usage, c.Model)!.Value)
+            / 1_000_000m * (c.Usage.Input > 272_000 ? 2m : 1m);
+        var expected = ledger.Calls.Where(c => c.Issue is null && c.Usage.ValidationIssue is null && c.Model is not null
+                && (SessionCostCalculator.IsGemini(c.Model) || c.Usage.Reasoning <= c.Usage.Output)
+                && SessionCostCalculator.BillableOutput(c.Usage, c.Model) is not null)
+            .Sum(Expected);
         var again = calculator.Calculate(ledger, prices);
         return new(true, result.StateText, result.RecordedCalls, result.PricedCalls, models.Length, result.Groups.Count,
             result.Amounts?.Total == expected, ReferenceEquals(result, again) && calculator.LastEvaluatedCallCount == 0,

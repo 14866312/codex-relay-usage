@@ -70,7 +70,6 @@ internal sealed class LiveTokenUsageAccumulator
         if (u.CacheRead > u.Input || u.CacheWrite > u.Input
             || (u.CacheRead.HasValue && u.CacheWrite.HasValue && u.Input.HasValue
                 && (decimal)u.CacheRead.Value + u.CacheWrite.Value > u.Input.Value)) return "缓存读写超过输入";
-        if (u.Reasoning > u.Output) return "推理输出大于输出";
         var total = TokenSnapshot.Sum(u.Input, u.Output);
         if (u.Input.HasValue && u.Output.HasValue && total is null) return "输入与输出相加溢出";
         if (u.Total.HasValue && total.HasValue && u.Total != total) return "总量与输入加输出不一致";

@@ -201,7 +201,7 @@ internal static class SyntheticSelfTests
             Append(a, Usage(new { input_tokens = 123L, output_tokens = 2L, total_tokens = 125L })); s = monitor.Poll("a")!;
             Check("complete appended row visible within two seconds", s.TotalTokens == 125 && elapsed.Elapsed.TotalSeconds < 2);
             Append(a, Usage(new { input_tokens = 100L, output_tokens = 5L, reasoning_output_tokens = 6L, total_tokens = 106L })); s = monitor.Poll("a", true)!;
-            Check("inconsistent total and reasoning flagged", s.Issue!.Contains("不一致") && !s.ReasoningIsValid);
+            Check("inconsistent total flagged and reasoning kept as reported", s.Issue!.Contains("不一致") && s.ReasoningOutputTokens == 6);
             Append(a, Usage(screenshot));
             Append(a, Event(new { type = "token_count", info = new { total_token_usage = (object?)null } }));
             Check("no usage info does not erase totals", monitor.Poll("a", true)!.TotalTokens == 4_956_088);
